@@ -163,8 +163,9 @@ final class ProcessTapController {
         _currentVolume = currentVol
     }
 
-    /// Soft-knee limiter using asymptotic compression
-    /// Threshold at 0.8, smooth transition to ±1.0 ceiling
+    /// Soft-knee limiter using asymptotic compression.
+    /// Threshold at 0.8, smooth transition to ±1.0 ceiling.
+    /// Output is guaranteed <= 1.0 for any finite input. Transparent for musical material.
     /// - Parameter sample: Input sample (may exceed ±1.0 when boosted)
     /// - Returns: Limited sample in range approximately ±1.0
     @inline(__always)
