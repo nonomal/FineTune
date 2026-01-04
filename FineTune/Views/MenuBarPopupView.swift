@@ -60,18 +60,20 @@ struct MenuBarPopupView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(audioEngine.apps) { app in
-                            AppVolumeRowView(
-                                app: app,
-                                volume: audioEngine.getVolume(for: app),
-                                onVolumeChange: { volume in
-                                    audioEngine.setVolume(for: app, to: volume)
-                                },
-                                devices: audioEngine.outputDevices,
-                                selectedDeviceUID: audioEngine.getDeviceUID(for: app),
-                                onDeviceSelected: { deviceUID in
-                                    audioEngine.setDevice(for: app, deviceUID: deviceUID)
-                                }
-                            )
+                            if let deviceUID = audioEngine.getDeviceUID(for: app) {
+                                AppVolumeRowView(
+                                    app: app,
+                                    volume: audioEngine.getVolume(for: app),
+                                    onVolumeChange: { volume in
+                                        audioEngine.setVolume(for: app, to: volume)
+                                    },
+                                    devices: audioEngine.outputDevices,
+                                    selectedDeviceUID: deviceUID,
+                                    onDeviceSelected: { newDeviceUID in
+                                        audioEngine.setDevice(for: app, deviceUID: newDeviceUID)
+                                    }
+                                )
+                            }
                         }
                     }
                 }

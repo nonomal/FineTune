@@ -8,7 +8,8 @@ import os
 final class AudioDeviceMonitor {
     private(set) var outputDevices: [AudioDevice] = []
 
-    var onDeviceDisconnected: ((String) -> Void)?
+    /// Called immediately when device disappears (passes UID and name)
+    var onDeviceDisconnected: ((_ uid: String, _ name: String) -> Void)?
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioDeviceMonitor")
 
@@ -20,9 +21,6 @@ final class AudioDeviceMonitor {
     )
 
     private var knownDeviceUIDs: Set<String> = []
-    private var disconnectTimers: [String: Task<Void, Never>] = [:]
-
-    private let gracePeriodSeconds: UInt64 = 3
 
     func start() {
         guard deviceListListenerBlock == nil else { return }
@@ -56,11 +54,6 @@ final class AudioDeviceMonitor {
             AudioObjectRemovePropertyListenerBlock(.system, &deviceListAddress, .main, block)
             deviceListListenerBlock = nil
         }
-
-        for (_, task) in disconnectTimers {
-            task.cancel()
-        }
-        disconnectTimers.removeAll()
     }
 
     func device(for uid: String) -> AudioDevice? {
@@ -108,55 +101,22 @@ final class AudioDeviceMonitor {
     private func handleDeviceListChanged() {
         let previousUIDs = knownDeviceUIDs
 
+        // Capture names before refresh removes devices from list
+        var deviceNames: [String: String] = [:]
+        for device in outputDevices {
+            deviceNames[device.uid] = device.name
+        }
+
         refresh()
 
         let currentUIDs = knownDeviceUIDs
 
         let disconnectedUIDs = previousUIDs.subtracting(currentUIDs)
         for uid in disconnectedUIDs {
-            handleDeviceDisconnected(uid)
+            let name = deviceNames[uid] ?? uid
+            logger.info("Device disconnected: \(name) (\(uid))")
+            onDeviceDisconnected?(uid, name)
         }
-
-        let reconnectedUIDs = currentUIDs.intersection(Set(disconnectTimers.keys))
-        for uid in reconnectedUIDs {
-            handleDeviceReconnected(uid)
-        }
-    }
-
-    private func handleDeviceDisconnected(_ deviceUID: String) {
-        logger.info("Device disconnected: \(deviceUID), starting grace period")
-
-        disconnectTimers[deviceUID]?.cancel()
-
-        disconnectTimers[deviceUID] = Task { [weak self, gracePeriodSeconds] in
-            defer {
-                // Always clean up timer entry to prevent memory leak
-                Task { @MainActor [weak self] in
-                    self?.disconnectTimers.removeValue(forKey: deviceUID)
-                }
-            }
-
-            do {
-                try await Task.sleep(for: .seconds(gracePeriodSeconds))
-            } catch {
-                // Cancelled (device reconnected or monitor stopped)
-                return
-            }
-
-            guard !Task.isCancelled else { return }
-
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                self.logger.info("Grace period expired for device: \(deviceUID), triggering fallback")
-                self.onDeviceDisconnected?(deviceUID)
-            }
-        }
-    }
-
-    private func handleDeviceReconnected(_ deviceUID: String) {
-        logger.info("Device reconnected within grace period: \(deviceUID)")
-        disconnectTimers[deviceUID]?.cancel()
-        disconnectTimers.removeValue(forKey: deviceUID)
     }
 
     deinit {

@@ -1,4 +1,5 @@
 // FineTune/Audio/AudioEngine.swift
+import AudioToolbox
 import Foundation
 import os
 import UserNotifications
@@ -14,7 +15,7 @@ final class AudioEngine {
 
     private var taps: [pid_t: ProcessTapController] = [:]
     private var appliedPIDs: Set<pid_t> = []
-    private var appDeviceRouting: [pid_t: String?] = [:]  // pid → deviceUID (nil = system default)
+    private var appDeviceRouting: [pid_t: String] = [:]  // pid → deviceUID (always explicit)
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioEngine")
 
     var outputDevices: [AudioDevice] {
@@ -40,8 +41,8 @@ final class AudioEngine {
                 self?.applyPersistedSettings()
             }
 
-            deviceMonitor.onDeviceDisconnected = { [weak self] deviceUID in
-                self?.fallbackAppsFromDevice(deviceUID)
+            deviceMonitor.onDeviceDisconnected = { [weak self] deviceUID, deviceName in
+                self?.handleDeviceDisconnected(deviceUID, name: deviceName)
             }
 
             applyPersistedSettings()
@@ -72,7 +73,9 @@ final class AudioEngine {
 
     func setVolume(for app: AudioApp, to volume: Float) {
         volumeState.setVolume(for: app.id, to: volume, identifier: app.persistenceIdentifier)
-        ensureTapExists(for: app)
+        if let deviceUID = appDeviceRouting[app.id] {
+            ensureTapExists(for: app, deviceUID: deviceUID)
+        }
         taps[app.id]?.volume = volume
     }
 
@@ -80,7 +83,7 @@ final class AudioEngine {
         volumeState.getVolume(for: app.id)
     }
 
-    func setDevice(for app: AudioApp, deviceUID: String?) {
+    func setDevice(for app: AudioApp, deviceUID: String) {
         appDeviceRouting[app.id] = deviceUID
         settingsManager.setDeviceRouting(for: app.persistenceIdentifier, deviceUID: deviceUID)
 
@@ -88,33 +91,49 @@ final class AudioEngine {
             Task {
                 do {
                     try await tap.switchDevice(to: deviceUID)
-                    logger.debug("Switched \(app.name) to device: \(deviceUID ?? "system default")")
+                    logger.debug("Switched \(app.name) to device: \(deviceUID)")
                 } catch {
                     logger.error("Failed to switch device for \(app.name): \(error.localizedDescription)")
                 }
             }
         } else {
-            ensureTapExists(for: app)
+            ensureTapExists(for: app, deviceUID: deviceUID)
         }
     }
 
     func getDeviceUID(for app: AudioApp) -> String? {
-        appDeviceRouting[app.id].flatMap { $0 }
+        appDeviceRouting[app.id]
     }
 
     func applyPersistedSettings() {
         for app in apps {
             guard !appliedPIDs.contains(app.id) else { continue }
 
-            // Load saved device routing
-            let savedDeviceUID = settingsManager.getDeviceRouting(for: app.persistenceIdentifier)
-            appDeviceRouting[app.id] = savedDeviceUID
+            // Load saved device routing, or assign to current macOS default
+            let deviceUID: String
+            if let savedDeviceUID = settingsManager.getDeviceRouting(for: app.persistenceIdentifier),
+               deviceMonitor.device(for: savedDeviceUID) != nil {
+                // Saved device exists, use it
+                deviceUID = savedDeviceUID
+                logger.debug("Applying saved device routing to \(app.name): \(deviceUID)")
+            } else {
+                // New app or saved device no longer exists: assign to current macOS default
+                do {
+                    deviceUID = try AudioDeviceID.readDefaultSystemOutputDeviceUID()
+                    settingsManager.setDeviceRouting(for: app.persistenceIdentifier, deviceUID: deviceUID)
+                    logger.debug("App \(app.name) assigned to default device: \(deviceUID)")
+                } catch {
+                    logger.error("Failed to get default device for \(app.name): \(error.localizedDescription)")
+                    continue
+                }
+            }
+            appDeviceRouting[app.id] = deviceUID
 
             // Load saved volume
             let savedVolume = volumeState.loadSavedVolume(for: app.id, identifier: app.persistenceIdentifier)
 
             // Always create tap for audio apps (always-on strategy)
-            ensureTapExists(for: app, deviceUID: savedDeviceUID)
+            ensureTapExists(for: app, deviceUID: deviceUID)
 
             // Only mark as applied if tap was successfully created
             // This allows retry on next applyPersistedSettings() call if tap failed
@@ -126,18 +145,13 @@ final class AudioEngine {
                 logger.debug("Applying saved volume \(displayPercent)% to \(app.name)")
                 taps[app.id]?.volume = volume
             }
-
-            if let deviceUID = savedDeviceUID {
-                logger.debug("Applying saved device routing to \(app.name): \(deviceUID)")
-            }
         }
     }
 
-    private func ensureTapExists(for app: AudioApp, deviceUID: String? = nil) {
+    private func ensureTapExists(for app: AudioApp, deviceUID: String) {
         guard taps[app.id] == nil else { return }
 
-        let targetDevice = deviceUID ?? appDeviceRouting[app.id].flatMap { $0 }
-        let tap = ProcessTapController(app: app, targetDeviceUID: targetDevice)
+        let tap = ProcessTapController(app: app, targetDeviceUID: deviceUID)
         tap.volume = volumeState.getVolume(for: app.id)
 
         do {
@@ -149,15 +163,30 @@ final class AudioEngine {
         }
     }
 
-    func fallbackAppsFromDevice(_ deviceUID: String) {
+    /// Called when device disappears - updates routing and switches taps immediately
+    private func handleDeviceDisconnected(_ deviceUID: String, name deviceName: String) {
+        // Get fallback device: macOS default, or first available device
+        let fallbackDevice: (uid: String, name: String)
+        do {
+            let uid = try AudioDeviceID.readDefaultSystemOutputDeviceUID()
+            let name = deviceMonitor.device(for: uid)?.name ?? "Default Output"
+            fallbackDevice = (uid: uid, name: name)
+        } catch {
+            guard let firstDevice = deviceMonitor.outputDevices.first else {
+                logger.error("No fallback device available")
+                return
+            }
+            fallbackDevice = (uid: firstDevice.uid, name: firstDevice.name)
+        }
+
         var affectedApps: [AudioApp] = []
         var tapsToSwitch: [ProcessTapController] = []
 
         for app in apps {
             if appDeviceRouting[app.id] == deviceUID {
                 affectedApps.append(app)
-                appDeviceRouting[app.id] = nil
-                settingsManager.setDeviceRouting(for: app.persistenceIdentifier, deviceUID: nil)
+                appDeviceRouting[app.id] = fallbackDevice.uid
+                settingsManager.setDeviceRouting(for: app.persistenceIdentifier, deviceUID: fallbackDevice.uid)
 
                 if let tap = taps[app.id] {
                     tapsToSwitch.append(tap)
@@ -169,29 +198,28 @@ final class AudioEngine {
             Task {
                 for tap in tapsToSwitch {
                     do {
-                        try await tap.switchDevice(to: nil)
+                        try await tap.switchDevice(to: fallbackDevice.uid)
                     } catch {
-                        logger.error("Failed to fallback device for \(tap.app.name): \(error.localizedDescription)")
+                        logger.error("Failed to switch device for \(tap.app.name): \(error.localizedDescription)")
                     }
                 }
             }
         }
 
         if !affectedApps.isEmpty {
-            showDisconnectNotification(deviceUID: deviceUID, affectedApps: affectedApps)
+            logger.info("\(deviceName) disconnected, \(affectedApps.count) app(s) switched to \(fallbackDevice.name)")
+            showDisconnectNotification(deviceName: deviceName, fallbackName: fallbackDevice.name, affectedApps: affectedApps)
         }
     }
 
-    private func showDisconnectNotification(deviceUID: String, affectedApps: [AudioApp]) {
-        let deviceName = deviceUID.components(separatedBy: ":").last ?? deviceUID
-
+    private func showDisconnectNotification(deviceName: String, fallbackName: String, affectedApps: [AudioApp]) {
         let content = UNMutableNotificationContent()
         content.title = "Audio Device Disconnected"
-        content.body = "\"\(deviceName)\" disconnected. \(affectedApps.count) app(s) switched to default output"
+        content.body = "\"\(deviceName)\" disconnected. \(affectedApps.count) app(s) switched to \(fallbackName)"
         content.sound = nil
 
         let request = UNNotificationRequest(
-            identifier: "device-disconnect-\(deviceUID)",
+            identifier: "device-disconnect-\(deviceName)",
             content: content,
             trigger: nil
         )
@@ -201,8 +229,6 @@ final class AudioEngine {
                 self?.logger.error("Failed to show notification: \(error.localizedDescription)")
             }
         }
-
-        logger.info("Device '\(deviceName)' disconnected, \(affectedApps.count) app(s) switched to default")
     }
 
     func cleanupStaleTaps() {

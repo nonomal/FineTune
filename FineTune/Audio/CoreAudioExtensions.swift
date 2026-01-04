@@ -50,6 +50,12 @@ extension AudioDeviceID {
         )
     }
 
+    /// Returns the UID of the current macOS default output device.
+    static func readDefaultSystemOutputDeviceUID() throws -> String {
+        let deviceID = try readDefaultSystemOutputDevice()
+        return try deviceID.readDeviceUID()
+    }
+
     func readDeviceUID() throws -> String {
         try readString(kAudioDevicePropertyDeviceUID)
     }

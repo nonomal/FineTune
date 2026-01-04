@@ -52,8 +52,8 @@ final class ProcessTapController {
         set { _volume = newValue }
     }
 
-    // Target device UID (nil = system default)
-    private var targetDeviceUID: String?
+    // Target device UID (always explicit)
+    private var targetDeviceUID: String
     private(set) var currentDeviceUID: String?
 
     // Core Audio state (primary tap)
@@ -82,7 +82,7 @@ final class ProcessTapController {
     private nonisolated(unsafe) var _secondarySamplesProcessed: Int = 0
     private let minimumWarmupSamples: Int = 2048  // ~43ms at 48kHz
 
-    init(app: AudioApp, targetDeviceUID: String? = nil) {
+    init(app: AudioApp, targetDeviceUID: String) {
         self.app = app
         self.targetDeviceUID = targetDeviceUID
         self.logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "ProcessTapController(\(app.name))")
@@ -110,20 +110,9 @@ final class ProcessTapController {
         processTapID = tapID
         logger.debug("Created process tap #\(tapID)")
 
-        // Get output device UID (target device or system default)
-        let outputUID: String
-        do {
-            if let targetUID = targetDeviceUID {
-                outputUID = targetUID
-            } else {
-                let systemOutputID = try AudioDeviceID.readDefaultSystemOutputDevice()
-                outputUID = try systemOutputID.readDeviceUID()
-            }
-            currentDeviceUID = outputUID
-        } catch {
-            cleanupPartialActivation()
-            throw error
-        }
+        // Use target device UID directly (always explicit)
+        let outputUID = targetDeviceUID
+        currentDeviceUID = outputUID
 
         // Create aggregate device
         let aggregateUID = UUID().uuidString
@@ -195,24 +184,18 @@ final class ProcessTapController {
 
     /// Switches the output device using dual-tap crossfade for seamless transition.
     /// Creates a second tap+aggregate for the new device, crossfades, then destroys the old one.
-    func switchDevice(to newDeviceUID: String?) async throws {
+    func switchDevice(to newDeviceUID: String) async throws {
         guard activated else {
             targetDeviceUID = newDeviceUID
-            logger.debug("[SWITCH] Not activated, just updating target to \(newDeviceUID ?? "nil")")
+            logger.debug("[SWITCH] Not activated, just updating target to \(newDeviceUID)")
             return
         }
 
         let startTime = CFAbsoluteTimeGetCurrent()
-        logger.info("[SWITCH] === START === \(self.app.name) -> \(newDeviceUID ?? "system default")")
+        logger.info("[SWITCH] === START === \(self.app.name) -> \(newDeviceUID)")
 
-        // Resolve the actual device UID
-        let newOutputUID: String
-        if let targetUID = newDeviceUID {
-            newOutputUID = targetUID
-        } else {
-            let systemOutputID = try AudioDeviceID.readDefaultSystemOutputDevice()
-            newOutputUID = try systemOutputID.readDeviceUID()
-        }
+        // Use device UID directly (always explicit)
+        let newOutputUID = newDeviceUID
 
         do {
             // Try crossfade approach
@@ -488,17 +471,11 @@ final class ProcessTapController {
     }
 
     /// Fallback: Switches using destroy/recreate approach.
-    private func performDestructiveDeviceSwitch(to newDeviceUID: String?, tapDesc: CATapDescription) async throws {
+    private func performDestructiveDeviceSwitch(to newDeviceUID: String, tapDesc: CATapDescription) async throws {
         let originalVolume = _volume
 
-        // Compute volume compensation (same logic as crossfade path)
-        let newOutputUID: String
-        if let targetUID = newDeviceUID {
-            newOutputUID = targetUID
-        } else {
-            let systemOutputID = try AudioDeviceID.readDefaultSystemOutputDevice()
-            newOutputUID = try systemOutputID.readDeviceUID()
-        }
+        // Use device UID directly (always explicit)
+        let newOutputUID = newDeviceUID
 
         var sourceVolume: Float = 1.0
         var destVolume: Float = 1.0
@@ -546,15 +523,9 @@ final class ProcessTapController {
 
     /// Internal destroy/recreate switch (used as fallback).
     /// Creates new tap+aggregate BEFORE destroying old to prevent audio leak to system default.
-    private func performDeviceSwitch(to newDeviceUID: String?, tapDesc: CATapDescription) throws {
-        // Resolve output UID first
-        let outputUID: String
-        if let targetUID = newDeviceUID {
-            outputUID = targetUID
-        } else {
-            let systemOutputID = try AudioDeviceID.readDefaultSystemOutputDevice()
-            outputUID = try systemOutputID.readDeviceUID()
-        }
+    private func performDeviceSwitch(to newDeviceUID: String, tapDesc: CATapDescription) throws {
+        // Use device UID directly (always explicit)
+        let outputUID = newDeviceUID
 
         // STEP 1: Create NEW tap (process will be muted by BOTH old and new taps)
         let newTapDesc = CATapDescription(stereoMixdownOfProcesses: [app.objectID])

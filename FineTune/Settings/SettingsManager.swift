@@ -36,12 +36,8 @@ final class SettingsManager {
         settings.appDeviceRouting[identifier]
     }
 
-    func setDeviceRouting(for identifier: String, deviceUID: String?) {
-        if let uid = deviceUID {
-            settings.appDeviceRouting[identifier] = uid
-        } else {
-            settings.appDeviceRouting.removeValue(forKey: identifier)
-        }
+    func setDeviceRouting(for identifier: String, deviceUID: String) {
+        settings.appDeviceRouting[identifier] = deviceUID
         scheduleSave()
     }
 

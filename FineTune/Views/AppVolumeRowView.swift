@@ -6,8 +6,8 @@ struct AppVolumeRowView: View {
     let volume: Float  // Linear gain 0-2
     let onVolumeChange: (Float) -> Void
     let devices: [AudioDevice]
-    let selectedDeviceUID: String?
-    let onDeviceSelected: (String?) -> Void
+    let selectedDeviceUID: String
+    let onDeviceSelected: (String) -> Void
 
     @State private var sliderValue: Double  // 0-1, log-mapped position
 
@@ -15,9 +15,9 @@ struct AppVolumeRowView: View {
         app: AudioApp,
         volume: Float,
         onVolumeChange: @escaping (Float) -> Void,
-        devices: [AudioDevice] = [],
-        selectedDeviceUID: String? = nil,
-        onDeviceSelected: @escaping (String?) -> Void = { _ in }
+        devices: [AudioDevice],
+        selectedDeviceUID: String,
+        onDeviceSelected: @escaping (String) -> Void
     ) {
         self.app = app
         self.volume = volume

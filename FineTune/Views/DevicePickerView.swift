@@ -3,16 +3,15 @@ import SwiftUI
 
 struct DevicePickerView: View {
     let devices: [AudioDevice]
-    let selectedDeviceUID: String?
-    let onDeviceSelected: (String?) -> Void
+    let selectedDeviceUID: String
+    let onDeviceSelected: (String) -> Void
 
     private var selectedDevice: AudioDevice? {
-        guard let uid = selectedDeviceUID else { return nil }
-        return devices.first { $0.uid == uid }
+        devices.first { $0.uid == selectedDeviceUID }
     }
 
     private var displayName: String {
-        selectedDevice?.name ?? "System Default"
+        selectedDevice?.name ?? "Unknown Device"
     }
 
     private var displayIcon: NSImage? {
@@ -21,36 +20,20 @@ struct DevicePickerView: View {
 
     var body: some View {
         Menu {
-            Button {
-                onDeviceSelected(nil)
-            } label: {
-                HStack {
-                    Label("System Default", systemImage: "speaker.wave.2")
-                    if selectedDeviceUID == nil {
-                        Spacer()
-                        Image(systemName: "checkmark")
-                    }
-                }
-            }
-
-            if !devices.isEmpty {
-                Divider()
-
-                ForEach(devices) { device in
-                    Button {
-                        onDeviceSelected(device.uid)
-                    } label: {
-                        HStack {
-                            if let icon = device.icon {
-                                Image(nsImage: icon)
-                            } else {
-                                Image(systemName: "hifispeaker")
-                            }
-                            Text(device.name)
-                            if selectedDeviceUID == device.uid {
-                                Spacer()
-                                Image(systemName: "checkmark")
-                            }
+            ForEach(devices) { device in
+                Button {
+                    onDeviceSelected(device.uid)
+                } label: {
+                    HStack {
+                        if let icon = device.icon {
+                            Image(nsImage: icon)
+                        } else {
+                            Image(systemName: "hifispeaker")
+                        }
+                        Text(device.name)
+                        if selectedDeviceUID == device.uid {
+                            Spacer()
+                            Image(systemName: "checkmark")
                         }
                     }
                 }
@@ -63,7 +46,7 @@ struct DevicePickerView: View {
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 14, height: 14)
                 } else {
-                    Image(systemName: "speaker.wave.2")
+                    Image(systemName: "hifispeaker")
                         .font(.caption)
                 }
                 Text(displayName)
