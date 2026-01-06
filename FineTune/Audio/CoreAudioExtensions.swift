@@ -56,6 +56,28 @@ extension AudioDeviceID {
         return try deviceID.readDeviceUID()
     }
 
+    /// Sets this device as the macOS default output device.
+    static func setDefaultOutputDevice(_ deviceID: AudioDeviceID) throws {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceIDValue = deviceID
+        let size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let err = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            size,
+            &deviceIDValue
+        )
+        guard err == noErr else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(err))
+        }
+    }
+
     func readDeviceUID() throws -> String {
         try readString(kAudioDevicePropertyDeviceUID)
     }

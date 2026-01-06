@@ -106,6 +106,21 @@ final class DeviceVolumeMonitor {
         }
     }
 
+    /// Sets a device as the macOS system default output device
+    func setDefaultDevice(_ deviceID: AudioDeviceID) {
+        guard deviceID.isValid else {
+            logger.warning("Cannot set default device: invalid device ID")
+            return
+        }
+
+        do {
+            try AudioDeviceID.setDefaultOutputDevice(deviceID)
+            logger.debug("Set default output device to \(deviceID)")
+        } catch {
+            logger.error("Failed to set default device: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Private Methods
 
     private func refreshDefaultDevice() {

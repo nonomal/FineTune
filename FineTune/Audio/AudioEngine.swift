@@ -16,6 +16,7 @@ final class AudioEngine {
     private var taps: [pid_t: ProcessTapController] = [:]
     private var appliedPIDs: Set<pid_t> = []
     private var appDeviceRouting: [pid_t: String] = [:]  // pid → deviceUID (always explicit)
+    private var pendingCleanup: [pid_t: Task<Void, Never>] = [:]  // Grace period for stale tap cleanup
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioEngine")
 
     var outputDevices: [AudioDevice] {
@@ -235,15 +236,42 @@ final class AudioEngine {
         let activePIDs = Set(apps.map { $0.id })
         let stalePIDs = Set(taps.keys).subtracting(activePIDs)
 
-        for pid in stalePIDs {
-            if let tap = taps.removeValue(forKey: pid) {
-                tap.invalidate()
-                logger.debug("Cleaned up stale tap for PID \(pid)")
+        // Cancel cleanup for PIDs that reappeared
+        for pid in activePIDs {
+            if let task = pendingCleanup.removeValue(forKey: pid) {
+                task.cancel()
+                logger.debug("Cancelled pending cleanup for PID \(pid) - app reappeared")
             }
-            appDeviceRouting.removeValue(forKey: pid)
         }
 
-        appliedPIDs = appliedPIDs.intersection(activePIDs)
-        volumeState.cleanup(keeping: activePIDs)
+        // Schedule cleanup for newly stale PIDs (with grace period)
+        for pid in stalePIDs {
+            guard pendingCleanup[pid] == nil else { continue }  // Already pending
+
+            pendingCleanup[pid] = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled else { return }
+
+                // Double-check still stale
+                let currentPIDs = Set(self.apps.map { $0.id })
+                guard !currentPIDs.contains(pid) else {
+                    self.pendingCleanup.removeValue(forKey: pid)
+                    return
+                }
+
+                // Now safe to cleanup
+                if let tap = self.taps.removeValue(forKey: pid) {
+                    tap.invalidate()
+                    self.logger.debug("Cleaned up stale tap for PID \(pid)")
+                }
+                self.appDeviceRouting.removeValue(forKey: pid)
+                self.pendingCleanup.removeValue(forKey: pid)
+            }
+        }
+
+        // Include pending PIDs in cleanup exclusion to avoid premature state cleanup
+        let pidsToKeep = activePIDs.union(Set(pendingCleanup.keys))
+        appliedPIDs = appliedPIDs.intersection(pidsToKeep)
+        volumeState.cleanup(keeping: pidsToKeep)
     }
 }

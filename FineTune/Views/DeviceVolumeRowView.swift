@@ -6,6 +6,7 @@ struct DeviceVolumeRowView: View {
     let volume: Float  // 0-1
     let isDefault: Bool
     let onVolumeChange: (Float) -> Void
+    let onSetAsDefault: () -> Void
 
     @State private var sliderValue: Double  // 0-1
 
@@ -13,17 +14,31 @@ struct DeviceVolumeRowView: View {
         device: AudioDevice,
         volume: Float,
         isDefault: Bool,
-        onVolumeChange: @escaping (Float) -> Void
+        onVolumeChange: @escaping (Float) -> Void,
+        onSetAsDefault: @escaping () -> Void
     ) {
         self.device = device
         self.volume = volume
         self.isDefault = isDefault
         self.onVolumeChange = onVolumeChange
+        self.onSetAsDefault = onSetAsDefault
         self._sliderValue = State(initialValue: Double(volume))
     }
 
     var body: some View {
         HStack(spacing: 12) {
+            // Clickable radio button for default selection
+            Button {
+                if !isDefault {
+                    onSetAsDefault()
+                }
+            } label: {
+                Image(systemName: isDefault ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isDefault ? .blue : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help(isDefault ? "Current default output" : "Set as default output device")
+
             // Icon - use device.icon with SF Symbol fallback
             if let icon = device.icon {
                 Image(nsImage: icon)

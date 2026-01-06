@@ -31,6 +31,9 @@ struct MenuBarPopupView: View {
                     isDefault: device.id == deviceVolumeMonitor.defaultDeviceID,
                     onVolumeChange: { volume in
                         deviceVolumeMonitor.setVolume(for: device.id, to: volume)
+                    },
+                    onSetAsDefault: {
+                        deviceVolumeMonitor.setDefaultDevice(device.id)
                     }
                 )
             }
