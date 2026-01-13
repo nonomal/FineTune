@@ -7,7 +7,7 @@ final class EQProcessor: @unchecked Sendable {
     /// Number of delay samples per channel: (2 * sections) + 2
     private static let delayBufferSize = (2 * EQSettings.bandCount) + 2  // 22
 
-    private let sampleRate: Double
+    private var sampleRate: Double
 
     /// Currently applied EQ settings (needed for sample rate updates)
     private var _currentSettings: EQSettings?
