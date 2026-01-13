@@ -14,9 +14,11 @@ struct AppRow: View {
     let onVolumeChange: (Float) -> Void
     let onMuteChange: (Bool) -> Void
     let onDeviceSelected: (String) -> Void
+    let onAppActivate: () -> Void
 
     @State private var sliderValue: Double  // 0-1, log-mapped position
     @State private var isEditing = false
+    @State private var isIconHovered = false
 
     /// Show muted icon when explicitly muted OR volume is 0
     private var showMutedIcon: Bool { isMutedExternal || sliderValue == 0 }
@@ -33,7 +35,8 @@ struct AppRow: View {
         isMuted: Bool = false,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteChange: @escaping (Bool) -> Void,
-        onDeviceSelected: @escaping (String) -> Void
+        onDeviceSelected: @escaping (String) -> Void,
+        onAppActivate: @escaping () -> Void
     ) {
         self.app = app
         self.volume = volume
@@ -44,17 +47,30 @@ struct AppRow: View {
         self.onVolumeChange = onVolumeChange
         self.onMuteChange = onMuteChange
         self.onDeviceSelected = onDeviceSelected
+        self.onAppActivate = onAppActivate
         // Convert linear gain to slider position
         self._sliderValue = State(initialValue: VolumeMapping.gainToSlider(volume))
     }
 
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
-            // App icon
+            // App icon - clickable to activate app
             Image(nsImage: app.icon)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: DesignTokens.Dimensions.iconSize, height: DesignTokens.Dimensions.iconSize)
+                .opacity(isIconHovered ? 0.7 : 1.0)
+                .onHover { hovering in
+                    isIconHovered = hovering
+                    if hovering {
+                        NSCursor.pointingHand.push()
+                    } else {
+                        NSCursor.pop()
+                    }
+                }
+                .onTapGesture {
+                    onAppActivate()
+                }
 
             // App name - expands to fill available space
             Text(app.name)
@@ -136,6 +152,7 @@ struct AppRowWithLevelPolling: View {
     let onVolumeChange: (Float) -> Void
     let onMuteChange: (Bool) -> Void
     let onDeviceSelected: (String) -> Void
+    let onAppActivate: () -> Void
 
     @State private var displayLevel: Float = 0
     @State private var levelTimer: Timer?
@@ -150,7 +167,8 @@ struct AppRowWithLevelPolling: View {
             isMuted: isMuted,
             onVolumeChange: onVolumeChange,
             onMuteChange: onMuteChange,
-            onDeviceSelected: onDeviceSelected
+            onDeviceSelected: onDeviceSelected,
+            onAppActivate: onAppActivate
         )
         .onAppear {
             startLevelPolling()
@@ -188,7 +206,8 @@ struct AppRowWithLevelPolling: View {
                 selectedDeviceUID: MockData.sampleDevices[0].uid,
                 onVolumeChange: { _ in },
                 onMuteChange: { _ in },
-                onDeviceSelected: { _ in }
+                onDeviceSelected: { _ in },
+                onAppActivate: {}
             )
 
             AppRow(
@@ -199,7 +218,8 @@ struct AppRowWithLevelPolling: View {
                 selectedDeviceUID: MockData.sampleDevices[1].uid,
                 onVolumeChange: { _ in },
                 onMuteChange: { _ in },
-                onDeviceSelected: { _ in }
+                onDeviceSelected: { _ in },
+                onAppActivate: {}
             )
 
             AppRow(
@@ -210,7 +230,8 @@ struct AppRowWithLevelPolling: View {
                 selectedDeviceUID: MockData.sampleDevices[2].uid,
                 onVolumeChange: { _ in },
                 onMuteChange: { _ in },
-                onDeviceSelected: { _ in }
+                onDeviceSelected: { _ in },
+                onAppActivate: {}
             )
         }
     }
@@ -228,7 +249,8 @@ struct AppRowWithLevelPolling: View {
                     selectedDeviceUID: MockData.sampleDevices.randomElement()!.uid,
                     onVolumeChange: { _ in },
                     onMuteChange: { _ in },
-                    onDeviceSelected: { _ in }
+                    onDeviceSelected: { _ in },
+                    onAppActivate: {}
                 )
             }
         }
