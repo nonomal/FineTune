@@ -8,9 +8,17 @@ Per-application audio control for macOS. Set individual volume levels, route app
 
 ![FineTune Screenshot](assets/screenshot.png)
 
-## Download
+## Install
 
-**[Download FineTune v1.0.0](https://github.com/ronitsingh10/FineTune/releases/latest)**
+### Homebrew (Recommended)
+
+```bash
+brew install --cask finetune
+```
+
+### Manual Download
+
+**[Download from GitHub Releases](https://github.com/ronitsingh10/FineTune/releases/latest)**
 
 ## Features
 
