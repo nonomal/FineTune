@@ -17,6 +17,8 @@ struct DropdownMenu<Item: Identifiable, Label: View, ItemContent: View>: View wh
 
     // Configuration
     private let itemHeight: CGFloat = 26
+    private let itemSpacing: CGFloat = 2
+    private let verticalPadding: CGFloat = 12  // 6 top + 6 bottom
     private let cornerRadius: CGFloat = 8
     private let animationDuration: Double = 0.15
 
@@ -26,10 +28,13 @@ struct DropdownMenu<Item: Identifiable, Label: View, ItemContent: View>: View wh
 
     private var menuHeight: CGFloat {
         let itemCount = CGFloat(items.count)
-        if let max = maxVisibleItems {
-            return min(itemCount, CGFloat(max)) * itemHeight + 10
+        let totalSpacing = itemSpacing * Swift.max(0, itemCount - 1)
+        if let maxItems = maxVisibleItems {
+            let visibleCount = min(itemCount, CGFloat(maxItems))
+            let visibleSpacing = itemSpacing * Swift.max(0, visibleCount - 1)
+            return visibleCount * itemHeight + visibleSpacing + verticalPadding
         }
-        return itemCount * itemHeight + 10
+        return itemCount * itemHeight + totalSpacing + verticalPadding
     }
 
     // MARK: - Trigger Button
@@ -84,6 +89,7 @@ struct DropdownMenu<Item: Identifiable, Label: View, ItemContent: View>: View wh
                         width: effectivePopoverWidth,
                         menuHeight: menuHeight,
                         itemHeight: itemHeight,
+                        itemSpacing: itemSpacing,
                         cornerRadius: cornerRadius,
                         onSelect: { item in
                             onSelect(item)
@@ -106,13 +112,14 @@ private struct DropdownContentView<Item: Identifiable, ItemContent: View>: View 
     let width: CGFloat
     let menuHeight: CGFloat
     let itemHeight: CGFloat
+    let itemSpacing: CGFloat
     let cornerRadius: CGFloat
     let onSelect: (Item) -> Void
     @ViewBuilder let itemContent: (Item, Bool) -> ItemContent
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(spacing: 2) {
+            LazyVStack(spacing: itemSpacing) {
                 ForEach(items) { item in
                     DropdownMenuItem(
                         item: item,
