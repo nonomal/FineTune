@@ -348,7 +348,9 @@ final class AudioEngine {
 
         if !affectedApps.isEmpty {
             logger.info("\(deviceName) disconnected, \(affectedApps.count) app(s) switched to \(fallbackDevice.name)")
-            showDisconnectNotification(deviceName: deviceName, fallbackName: fallbackDevice.name, affectedApps: affectedApps)
+            if settingsManager.appSettings.showDeviceDisconnectAlerts {
+                showDisconnectNotification(deviceName: deviceName, fallbackName: fallbackDevice.name, affectedApps: affectedApps)
+            }
         }
     }
 
@@ -399,7 +401,9 @@ final class AudioEngine {
 
         if !affectedApps.isEmpty {
             logger.info("\(deviceName) reconnected, switched \(affectedApps.count) app(s) back")
-            showReconnectNotification(deviceName: deviceName, affectedApps: affectedApps)
+            if settingsManager.appSettings.showDeviceDisconnectAlerts {
+                showReconnectNotification(deviceName: deviceName, affectedApps: affectedApps)
+            }
         }
     }
 
@@ -482,7 +486,9 @@ final class AudioEngine {
         if !affectedApps.isEmpty {
             let deviceName = deviceMonitor.device(for: newDefaultUID)?.name ?? "Default Output"
             logger.info("Default changed to \(deviceName), \(affectedApps.count) app(s) following")
-            showDefaultChangedNotification(newDeviceName: deviceName, affectedApps: affectedApps)
+            if settingsManager.appSettings.showDeviceDisconnectAlerts {
+                showDefaultChangedNotification(newDeviceName: deviceName, affectedApps: affectedApps)
+            }
         }
     }
 
