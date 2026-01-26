@@ -98,15 +98,6 @@ Select your development team in Signing & Capabilities, then build and run (Cmd+
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
 
-## Related Projects
-
-Looking for alternatives? Here are other macOS audio control tools:
-
-- [BackgroundMusic](https://github.com/kyleneideck/BackgroundMusic) — Per-app volume with auto-pause feature (free, open source)
-- [eqMac](https://github.com/bitgapp/eqMac) — System-wide equalizer with volume mixer (freemium)
-- [SoundSource](https://rogueamoeba.com/soundsource/) — Commercial per-app audio control ($39)
-- [Sound Control](https://staticz.com/soundcontrol/) — Commercial volume mixer with EQ ($40)
-
 ## Contributing
 
 Contributions are welcome! Whether it's bug reports, feature requests, or pull requests — all help is appreciated.
