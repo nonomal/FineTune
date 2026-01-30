@@ -65,8 +65,14 @@ final class ProcessTapController {
     private let minimumWarmupSamples: Int = 2048
 
     private var eqProcessor: EQProcessor?
-    private var targetDeviceUID: String
-    private(set) var currentDeviceUID: String?
+
+    // Target device UIDs for synchronized multi-output (first is clock source)
+    private var targetDeviceUIDs: [String]
+    // Current active device UIDs
+    private(set) var currentDeviceUIDs: [String] = []
+
+    /// Primary device UID (clock source, first in array) - for backward compatibility
+    var currentDeviceUID: String? { currentDeviceUIDs.first }
 
     // Core Audio state (primary tap)
     private var processTapID: AudioObjectID = .unknown
@@ -107,17 +113,63 @@ final class ProcessTapController {
 
     // MARK: - Initialization
 
-    init(app: AudioApp, targetDeviceUID: String, deviceMonitor: AudioDeviceMonitor? = nil) {
+    /// Initialize with multiple output devices for synchronized multi-device output.
+    /// First device in array is the clock source, others have drift compensation enabled.
+    init(app: AudioApp, targetDeviceUIDs: [String], deviceMonitor: AudioDeviceMonitor? = nil) {
+        precondition(!targetDeviceUIDs.isEmpty, "Must have at least one target device")
         self.app = app
-        self.targetDeviceUID = targetDeviceUID
+        self.targetDeviceUIDs = targetDeviceUIDs
         self.deviceMonitor = deviceMonitor
         self.logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "ProcessTapController(\(app.name))")
+    }
+
+    /// Convenience initializer for single device output.
+    convenience init(app: AudioApp, targetDeviceUID: String, deviceMonitor: AudioDeviceMonitor? = nil) {
+        self.init(app: app, targetDeviceUIDs: [targetDeviceUID], deviceMonitor: deviceMonitor)
     }
 
     // MARK: - Public Methods
 
     func updateEQSettings(_ settings: EQSettings) {
         eqProcessor?.updateSettings(settings)
+    }
+
+    // MARK: - Multi-Device Aggregate Configuration
+
+    /// Builds aggregate device description for synchronized multi-device output.
+    /// First device is clock source (no drift compensation), others sync to it via drift compensation.
+    private func buildAggregateDescription(outputUIDs: [String], tapUUID: UUID, name: String) -> [String: Any] {
+        precondition(!outputUIDs.isEmpty, "Must have at least one output device")
+
+        // Build sub-device list - first device is clock source
+        var subDevices: [[String: Any]] = []
+        for (index, deviceUID) in outputUIDs.enumerated() {
+            subDevices.append([
+                kAudioSubDeviceUIDKey: deviceUID,
+                // First device (index 0) is clock source - no drift compensation needed
+                // All other devices have drift compensation enabled to sync to clock
+                kAudioSubDeviceDriftCompensationKey: index > 0
+            ])
+        }
+
+        let clockDeviceUID = outputUIDs[0]  // Primary = clock source
+
+        return [
+            kAudioAggregateDeviceNameKey: name,
+            kAudioAggregateDeviceUIDKey: UUID().uuidString,
+            kAudioAggregateDeviceMainSubDeviceKey: clockDeviceUID,
+            kAudioAggregateDeviceClockDeviceKey: clockDeviceUID,
+            kAudioAggregateDeviceIsPrivateKey: true,
+            kAudioAggregateDeviceIsStackedKey: true,  // All sub-devices receive same audio
+            kAudioAggregateDeviceTapAutoStartKey: true,
+            kAudioAggregateDeviceSubDeviceListKey: subDevices,
+            kAudioAggregateDeviceTapListKey: [
+                [
+                    kAudioSubTapDriftCompensationKey: true,
+                    kAudioSubTapUIDKey: tapUUID.uuidString
+                ]
+            ]
+        ]
     }
 
     func activate() throws {
@@ -142,36 +194,13 @@ final class ProcessTapController {
         processTapID = tapID
         logger.debug("Created process tap #\(tapID)")
 
-        let outputUID = targetDeviceUID
-        currentDeviceUID = outputUID
-
-        // Create aggregate device combining the output device with our process tap.
-        // The aggregate device's clock is the output device - important for USB DACs
-        // which have their own clock and require the HAL to match their timing.
-        // DriftCompensation=false on sub-device because it IS the clock source.
-        // DriftCompensation=true on tap because the tapped process may use a different clock.
-        let aggregateUID = UUID().uuidString
-        let description: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "FineTune-\(app.id)",
-            kAudioAggregateDeviceUIDKey: aggregateUID,
-            kAudioAggregateDeviceMainSubDeviceKey: outputUID,
-            kAudioAggregateDeviceClockDeviceKey: outputUID,
-            kAudioAggregateDeviceIsPrivateKey: true,
-            kAudioAggregateDeviceIsStackedKey: false,
-            kAudioAggregateDeviceTapAutoStartKey: true,
-            kAudioAggregateDeviceSubDeviceListKey: [
-                [
-                    kAudioSubDeviceUIDKey: outputUID,
-                    kAudioSubDeviceDriftCompensationKey: false
-                ]
-            ],
-            kAudioAggregateDeviceTapListKey: [
-                [
-                    kAudioSubTapDriftCompensationKey: true,
-                    kAudioSubTapUIDKey: tapDesc.uuid.uuidString
-                ]
-            ]
-        ]
+        // Build multi-device aggregate description
+        // First device is clock source, others have drift compensation for sync
+        let description = buildAggregateDescription(
+            outputUIDs: targetDeviceUIDs,
+            tapUUID: tapDesc.uuid,
+            name: "FineTune-\(app.id)"
+        )
 
         aggregateDeviceID = .unknown
         err = AudioHardwareCreateAggregateDevice(description as CFDictionary, &aggregateDeviceID)
@@ -224,37 +253,52 @@ final class ProcessTapController {
         _primaryCurrentVolume = _volume
         _deviceVolumeCompensation = 1.0
 
+        // Track current devices for external queries
+        currentDeviceUIDs = targetDeviceUIDs
+
         activated = true
-        logger.info("Tap activated for \(self.app.name)")
+        logger.info("Tap activated for \(self.app.name) on \(self.targetDeviceUIDs.count) device(s)")
     }
 
+    /// Switch to a single device (convenience for backward compatibility).
     func switchDevice(to newDeviceUID: String) async throws {
+        try await updateDevices(to: [newDeviceUID])
+    }
+
+    /// Updates output devices using crossfade for seamless transition.
+    /// Creates a second tap+aggregate for the new device set, crossfades, then destroys the old one.
+    func updateDevices(to newDeviceUIDs: [String]) async throws {
+        precondition(!newDeviceUIDs.isEmpty, "Must have at least one target device")
+
         guard activated else {
-            targetDeviceUID = newDeviceUID
-            logger.debug("[SWITCH] Not activated, just updating target to \(newDeviceUID)")
+            targetDeviceUIDs = newDeviceUIDs
             return
         }
 
-        let startTime = CFAbsoluteTimeGetCurrent()
-        logger.info("[SWITCH] === START === \(self.app.name) -> \(newDeviceUID)")
+        guard newDeviceUIDs != currentDeviceUIDs else { return }
 
-        let newOutputUID = newDeviceUID
+        let startTime = CFAbsoluteTimeGetCurrent()
+        logger.info("[UPDATE] Switching \(self.app.name) to \(newDeviceUIDs.count) device(s)")
+
+        // For now, crossfade uses the first (primary) device
+        // All devices in the aggregate will be included
+        let primaryDeviceUID = newDeviceUIDs[0]
 
         do {
-            try await performCrossfadeSwitch(to: newOutputUID)
+            try await performCrossfadeSwitch(to: primaryDeviceUID, allDeviceUIDs: newDeviceUIDs)
         } catch {
-            logger.warning("[SWITCH] Crossfade failed: \(error.localizedDescription), using fallback")
+            logger.warning("[UPDATE] Crossfade failed: \(error.localizedDescription), using fallback")
             guard tapDescription != nil else {
                 throw CrossfadeError.noTapDescription
             }
-            try await performDestructiveDeviceSwitch(to: newDeviceUID)
+            try await performDestructiveDeviceSwitch(to: primaryDeviceUID, allDeviceUIDs: newDeviceUIDs)
         }
 
-        targetDeviceUID = newDeviceUID
-        currentDeviceUID = newOutputUID
+        targetDeviceUIDs = newDeviceUIDs
+        currentDeviceUIDs = newDeviceUIDs
 
         let endTime = CFAbsoluteTimeGetCurrent()
-        logger.info("[SWITCH] === END === Total time: \((endTime - startTime) * 1000)ms")
+        logger.info("[UPDATE] === END === Total time: \((endTime - startTime) * 1000)ms")
     }
 
     /// Tears down the tap and releases all CoreAudio resources.
@@ -302,11 +346,13 @@ final class ProcessTapController {
 
     // MARK: - Crossfade Operations
 
-    private func performCrossfadeSwitch(to newOutputUID: String) async throws {
+    private func performCrossfadeSwitch(to primaryDeviceUID: String, allDeviceUIDs: [String]? = nil) async throws {
+        let deviceUIDs = allDeviceUIDs ?? [primaryDeviceUID]
+
         logger.info("[CROSSFADE] Step 1: Reading device volumes for compensation")
 
         var isBluetoothDestination = false
-        if let destDevice = deviceMonitor?.device(for: newOutputUID) {
+        if let destDevice = deviceMonitor?.device(for: primaryDeviceUID) {
             let transport = destDevice.id.readTransportType()
             isBluetoothDestination = (transport == .bluetooth || transport == .bluetoothLE)
             logger.debug("[CROSSFADE] Destination device: BT=\(isBluetoothDestination)")
@@ -319,8 +365,8 @@ final class ProcessTapController {
         _secondarySamplesProcessed = 0
         _isCrossfading = true
 
-        logger.info("[CROSSFADE] Step 3: Creating secondary tap for new device")
-        try createSecondaryTap(for: newOutputUID)
+        logger.info("[CROSSFADE] Step 3: Creating secondary tap for \(deviceUIDs.count) device(s)")
+        try createSecondaryTap(for: deviceUIDs)
 
         if isBluetoothDestination {
             logger.info("[CROSSFADE] Destination is Bluetooth - using extended warmup")
@@ -367,7 +413,9 @@ final class ProcessTapController {
         logger.info("[CROSSFADE] Complete")
     }
 
-    private func createSecondaryTap(for outputUID: String) throws {
+    private func createSecondaryTap(for outputUIDs: [String]) throws {
+        precondition(!outputUIDs.isEmpty, "Must have at least one output device")
+
         let tapDesc = CATapDescription(stereoMixdownOfProcesses: [app.objectID])
         tapDesc.uuid = UUID()
         tapDesc.muteBehavior = .mutedWhenTapped
@@ -381,28 +429,12 @@ final class ProcessTapController {
         secondaryTapID = tapID
         logger.debug("[CROSSFADE] Created secondary tap #\(tapID)")
 
-        let aggregateUID = UUID().uuidString
-        let description: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "FineTune-\(app.id)-secondary",
-            kAudioAggregateDeviceUIDKey: aggregateUID,
-            kAudioAggregateDeviceMainSubDeviceKey: outputUID,
-            kAudioAggregateDeviceClockDeviceKey: outputUID,
-            kAudioAggregateDeviceIsPrivateKey: true,
-            kAudioAggregateDeviceIsStackedKey: false,
-            kAudioAggregateDeviceTapAutoStartKey: true,
-            kAudioAggregateDeviceSubDeviceListKey: [
-                [
-                    kAudioSubDeviceUIDKey: outputUID,
-                    kAudioSubDeviceDriftCompensationKey: false
-                ]
-            ],
-            kAudioAggregateDeviceTapListKey: [
-                [
-                    kAudioSubTapDriftCompensationKey: true,
-                    kAudioSubTapUIDKey: tapDesc.uuid.uuidString
-                ]
-            ]
-        ]
+        // Build multi-device aggregate description using helper
+        let description = buildAggregateDescription(
+            outputUIDs: outputUIDs,
+            tapUUID: tapDesc.uuid,
+            name: "FineTune-\(app.id)-secondary"
+        )
 
         err = AudioHardwareCreateAggregateDevice(description as CFDictionary, &secondaryAggregateID)
         guard err == noErr else {
@@ -495,7 +527,8 @@ final class ProcessTapController {
         secondaryTapDescription = nil
     }
 
-    private func performDestructiveDeviceSwitch(to newDeviceUID: String) async throws {
+    private func performDestructiveDeviceSwitch(to primaryDeviceUID: String, allDeviceUIDs: [String]? = nil) async throws {
+        let deviceUIDs = allDeviceUIDs ?? [primaryDeviceUID]
         let originalVolume = _volume
 
         _forceSilence = true
@@ -503,7 +536,7 @@ final class ProcessTapController {
 
         try await Task.sleep(for: .milliseconds(100))
 
-        try performDeviceSwitch(to: newDeviceUID)
+        try performDeviceSwitch(to: deviceUIDs)
 
         _primaryCurrentVolume = 0
         _volume = 0
@@ -520,8 +553,8 @@ final class ProcessTapController {
         logger.info("[SWITCH-DESTROY] Complete")
     }
 
-    private func performDeviceSwitch(to newDeviceUID: String) throws {
-        let outputUID = newDeviceUID
+    private func performDeviceSwitch(to outputUIDs: [String]) throws {
+        precondition(!outputUIDs.isEmpty, "Must have at least one output device")
 
         let newTapDesc = CATapDescription(stereoMixdownOfProcesses: [app.objectID])
         newTapDesc.uuid = UUID()
@@ -533,28 +566,12 @@ final class ProcessTapController {
             throw CrossfadeError.tapCreationFailed(err)
         }
 
-        let aggregateUID = UUID().uuidString
-        let description: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "FineTune-\(app.id)",
-            kAudioAggregateDeviceUIDKey: aggregateUID,
-            kAudioAggregateDeviceMainSubDeviceKey: outputUID,
-            kAudioAggregateDeviceClockDeviceKey: outputUID,
-            kAudioAggregateDeviceIsPrivateKey: true,
-            kAudioAggregateDeviceIsStackedKey: false,
-            kAudioAggregateDeviceTapAutoStartKey: true,
-            kAudioAggregateDeviceSubDeviceListKey: [
-                [
-                    kAudioSubDeviceUIDKey: outputUID,
-                    kAudioSubDeviceDriftCompensationKey: false
-                ]
-            ],
-            kAudioAggregateDeviceTapListKey: [
-                [
-                    kAudioSubTapDriftCompensationKey: true,
-                    kAudioSubTapUIDKey: newTapDesc.uuid.uuidString
-                ]
-            ]
-        ]
+        // Build multi-device aggregate description using helper
+        let description = buildAggregateDescription(
+            outputUIDs: outputUIDs,
+            tapUUID: newTapDesc.uuid,
+            name: "FineTune-\(app.id)"
+        )
 
         var newAggregateID: AudioObjectID = .unknown
         err = AudioHardwareCreateAggregateDevice(description as CFDictionary, &newAggregateID)
@@ -596,8 +613,8 @@ final class ProcessTapController {
         tapDescription = newTapDesc
         aggregateDeviceID = newAggregateID
         deviceProcID = newDeviceProcID
-        targetDeviceUID = newDeviceUID
-        currentDeviceUID = outputUID
+        targetDeviceUIDs = outputUIDs
+        currentDeviceUIDs = outputUIDs
 
         if let deviceSampleRate = try? aggregateDeviceID.readNominalSampleRate() {
             rampCoefficient = 1 - exp(-1 / (Float(deviceSampleRate) * 0.030))
