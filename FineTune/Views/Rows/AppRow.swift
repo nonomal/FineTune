@@ -30,32 +30,10 @@ struct AppRow: View {
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
 
-    @State private var dragOverrideValue: Double?  // Only set while user is dragging
-    @State private var isEditing = false
-
-    /// Slider value - computed from volume/maxBoost, or drag override while dragging
-    private var sliderValue: Double {
-        dragOverrideValue ?? VolumeMapping.gainToSlider(volume, maxBoost: maxVolumeBoost)
-    }
     @State private var isRowHovered = false
     @State private var isIconHovered = false
-    @State private var isEQButtonHovered = false
     @State private var isPinButtonHovered = false
     @State private var localEQSettings: EQSettings
-
-    /// Show muted icon when explicitly muted OR volume is 0
-    private var showMutedIcon: Bool { isMutedExternal || sliderValue == 0 }
-
-    /// EQ button color following same pattern as MuteButton
-    private var eqButtonColor: Color {
-        if isEQExpanded {
-            return DesignTokens.Colors.interactiveActive
-        } else if isEQButtonHovered {
-            return DesignTokens.Colors.interactiveHover
-        } else {
-            return DesignTokens.Colors.interactiveDefault
-        }
-    }
 
     /// Pin button color - visible when pinned or row is hovered
     private var pinButtonColor: Color {
@@ -69,9 +47,6 @@ struct AppRow: View {
             return .clear
         }
     }
-
-    /// Default volume to restore when unmuting from 0 (50% = unity gain)
-    private let defaultUnmuteVolume: Double = 0.5
 
     init(
         app: AudioApp,
@@ -176,110 +151,27 @@ struct AppRow: View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Controls section - fixed width so sliders align across rows
-                HStack(spacing: DesignTokens.Spacing.sm) {
-                    // Mute button
-                    MuteButton(isMuted: showMutedIcon) {
-                        if showMutedIcon {
-                            // Unmute: restore to default volume if at 0
-                            if volume == 0 {
-                                onVolumeChange(1.0)  // Restore to unity (100%)
-                            }
-                            onMuteChange(false)
-                        } else {
-                            // Mute
-                            onMuteChange(true)
-                        }
-                    }
-
-                    // Volume slider with unity marker (Liquid Glass)
-                    LiquidGlassSlider(
-                        value: Binding(
-                            get: { sliderValue },
-                            set: { newValue in
-                                dragOverrideValue = newValue
-                                let gain = VolumeMapping.sliderToGain(newValue, maxBoost: maxVolumeBoost)
-                                onVolumeChange(gain)
-                                // Auto-unmute when slider moved while muted
-                                if isMutedExternal {
-                                    onMuteChange(false)
-                                }
-                            }
-                        ),
-                        showUnityMarker: true,
-                        onEditingChanged: { editing in
-                            isEditing = editing
-                            // Clear override when done editing - let computed value take over
-                            if !editing {
-                                dragOverrideValue = nil
-                            }
-                        }
-                    )
-                    .frame(width: DesignTokens.Dimensions.sliderWidth)
-                    .opacity(showMutedIcon ? 0.5 : 1.0)
-
-                    // Editable volume percentage (100% = unity)
-                    EditablePercentage(
-                        percentage: Binding(
-                            get: {
-                                let gain = VolumeMapping.sliderToGain(sliderValue, maxBoost: maxVolumeBoost)
-                                return Int(round(gain * 100))
-                            },
-                            set: { newPercentage in
-                                let gain = Float(newPercentage) / 100.0
-                                onVolumeChange(gain)  // Update actual volume, computed sliderValue will follow
-                            }
-                        ),
-                        range: 0...Int(round(maxVolumeBoost * 100))
-                    )
-
-                    // VU Meter (shows gray bars when muted or volume is 0)
-                    VUMeter(level: audioLevel, isMuted: showMutedIcon)
-
-                    // Device picker with single/multi mode support
-                    DevicePicker(
-                        devices: devices,
-                        selectedDeviceUID: selectedDeviceUID,
-                        selectedDeviceUIDs: selectedDeviceUIDs,
-                        isFollowingDefault: isFollowingDefault,
-                        defaultDeviceUID: defaultDeviceUID,
-                        mode: deviceSelectionMode,
-                        onModeChange: onDeviceModeChange,
-                        onDeviceSelected: onDeviceSelected,
-                        onDevicesSelected: onDevicesSelected,
-                        onSelectFollowDefault: onSelectFollowDefault,
-                        showModeToggle: true
-                    )
-
-                    // EQ button at end of row (animates to X when expanded)
-                    Button {
-                        onEQToggle()
-                    } label: {
-                        ZStack {
-                            Image(systemName: "slider.vertical.3")
-                                .opacity(isEQExpanded ? 0 : 1)
-                                .rotationEffect(.degrees(isEQExpanded ? 90 : 0))
-
-                            Image(systemName: "xmark")
-                                .opacity(isEQExpanded ? 1 : 0)
-                                .rotationEffect(.degrees(isEQExpanded ? 0 : -90))
-                        }
-                        .font(.system(size: 12))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(eqButtonColor)
-                        .frame(
-                            minWidth: DesignTokens.Dimensions.minTouchTarget,
-                            minHeight: DesignTokens.Dimensions.minTouchTarget
-                        )
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { isEQButtonHovered = $0 }
-                    .help(isEQExpanded ? "Close Equalizer" : "Equalizer")
-                    .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEQExpanded)
-                    .animation(DesignTokens.Animation.hover, value: isEQButtonHovered)
-                }
-                .frame(width: DesignTokens.Dimensions.controlsWidth)
+                // Shared controls section
+                AppRowControls(
+                    volume: volume,
+                    isMuted: isMutedExternal,
+                    audioLevel: audioLevel,
+                    devices: devices,
+                    selectedDeviceUID: selectedDeviceUID,
+                    selectedDeviceUIDs: selectedDeviceUIDs,
+                    isFollowingDefault: isFollowingDefault,
+                    defaultDeviceUID: defaultDeviceUID,
+                    deviceSelectionMode: deviceSelectionMode,
+                    maxVolumeBoost: maxVolumeBoost,
+                    isEQExpanded: isEQExpanded,
+                    onVolumeChange: onVolumeChange,
+                    onMuteChange: onMuteChange,
+                    onDeviceSelected: onDeviceSelected,
+                    onDevicesSelected: onDevicesSelected,
+                    onDeviceModeChange: onDeviceModeChange,
+                    onSelectFollowDefault: onSelectFollowDefault,
+                    onEQToggle: onEQToggle
+                )
             }
             .frame(height: DesignTokens.Dimensions.rowContentHeight)
             .onHover { isRowHovered = $0 }
