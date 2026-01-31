@@ -19,7 +19,8 @@ struct MenuBarPopupView: View {
     @State private var showingInputDevices = false
 
     /// Track which app has its EQ panel expanded (only one at a time)
-    @State private var expandedEQAppID: pid_t?
+    /// Uses DisplayableApp.id (String) to work with both active and inactive apps
+    @State private var expandedEQAppID: String?
 
     /// Debounce EQ toggle to prevent rapid clicks during animation
     @State private var isEQAnimating = false
@@ -169,8 +170,8 @@ struct MenuBarPopupView: View {
         Divider()
             .padding(.vertical, DesignTokens.Spacing.xs)
 
-        // Apps section
-        if audioEngine.apps.isEmpty {
+        // Apps section (active + pinned inactive)
+        if audioEngine.displayableApps.isEmpty {
             emptyStateView
         } else {
             appsSection
@@ -391,7 +392,7 @@ struct MenuBarPopupView: View {
 
         // ScrollViewReader needed for EQ expand scroll-to behavior
         ScrollViewReader { scrollProxy in
-            if audioEngine.apps.count > appScrollThreshold {
+            if audioEngine.displayableApps.count > appScrollThreshold {
                 ScrollView {
                     appsContent(scrollProxy: scrollProxy)
                 }
@@ -405,75 +406,147 @@ struct MenuBarPopupView: View {
 
     private func appsContent(scrollProxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            ForEach(audioEngine.apps) { app in
-                if let deviceUID = audioEngine.getDeviceUID(for: app) {
-                    AppRowWithLevelPolling(
-                        app: app,
-                        volume: audioEngine.getVolume(for: app),
-                        isMuted: audioEngine.getMute(for: app),
-                        devices: audioEngine.outputDevices,
-                        selectedDeviceUID: deviceUID,
-                        selectedDeviceUIDs: audioEngine.getSelectedDeviceUIDs(for: app),
-                        isFollowingDefault: audioEngine.isFollowingDefault(for: app),
-                        defaultDeviceUID: deviceVolumeMonitor.defaultDeviceUID,
-                        deviceSelectionMode: audioEngine.getDeviceSelectionMode(for: app),
-                        maxVolumeBoost: audioEngine.settingsManager.appSettings.maxVolumeBoost,
-                        getAudioLevel: { audioEngine.getAudioLevel(for: app) },
-                        isPopupVisible: isPopupVisible,
-                        onVolumeChange: { volume in
-                            audioEngine.setVolume(for: app, to: volume)
-                        },
-                        onMuteChange: { muted in
-                            audioEngine.setMute(for: app, to: muted)
-                        },
-                        onDeviceSelected: { newDeviceUID in
-                            audioEngine.setDevice(for: app, deviceUID: newDeviceUID)
-                        },
-                        onDevicesSelected: { uids in
-                            audioEngine.setSelectedDeviceUIDs(for: app, to: uids)
-                        },
-                        onDeviceModeChange: { mode in
-                            audioEngine.setDeviceSelectionMode(for: app, to: mode)
-                        },
-                        onSelectFollowDefault: {
-                            audioEngine.setDevice(for: app, deviceUID: nil)
-                        },
-                        onAppActivate: {
-                            activateApp(pid: app.id, bundleID: app.bundleID)
-                        },
-                        eqSettings: audioEngine.getEQSettings(for: app),
-                        onEQChange: { settings in
-                            audioEngine.setEQSettings(settings, for: app)
-                        },
-                        isEQExpanded: expandedEQAppID == app.id,
-                        onEQToggle: {
-                            // Debounce: ignore clicks during animation
-                            guard !isEQAnimating else { return }
-                            isEQAnimating = true
+            ForEach(audioEngine.displayableApps) { displayableApp in
+                switch displayableApp {
+                case .active(let app):
+                    activeAppRow(app: app, displayableApp: displayableApp, scrollProxy: scrollProxy)
 
-                            let isExpanding = expandedEQAppID != app.id
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                                if expandedEQAppID == app.id {
-                                    expandedEQAppID = nil
-                                } else {
-                                    expandedEQAppID = app.id
-                                }
-                                // Scroll in same animation transaction
-                                if isExpanding {
-                                    scrollProxy.scrollTo(app.id, anchor: .top)
-                                }
-                            }
-
-                            // Re-enable after animation completes
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                                isEQAnimating = false
-                            }
-                        }
-                    )
+                case .pinnedInactive(let info):
+                    inactiveAppRow(info: info, displayableApp: displayableApp, scrollProxy: scrollProxy)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Row for an active app (currently producing audio)
+    @ViewBuilder
+    private func activeAppRow(app: AudioApp, displayableApp: DisplayableApp, scrollProxy: ScrollViewProxy) -> some View {
+        if let deviceUID = audioEngine.getDeviceUID(for: app) {
+            AppRowWithLevelPolling(
+                app: app,
+                volume: audioEngine.getVolume(for: app),
+                isMuted: audioEngine.getMute(for: app),
+                devices: audioEngine.outputDevices,
+                selectedDeviceUID: deviceUID,
+                selectedDeviceUIDs: audioEngine.getSelectedDeviceUIDs(for: app),
+                isFollowingDefault: audioEngine.isFollowingDefault(for: app),
+                defaultDeviceUID: deviceVolumeMonitor.defaultDeviceUID,
+                deviceSelectionMode: audioEngine.getDeviceSelectionMode(for: app),
+                maxVolumeBoost: audioEngine.settingsManager.appSettings.maxVolumeBoost,
+                isPinned: audioEngine.isPinned(app),
+                getAudioLevel: { audioEngine.getAudioLevel(for: app) },
+                isPopupVisible: isPopupVisible,
+                onVolumeChange: { volume in
+                    audioEngine.setVolume(for: app, to: volume)
+                },
+                onMuteChange: { muted in
+                    audioEngine.setMute(for: app, to: muted)
+                },
+                onDeviceSelected: { newDeviceUID in
+                    audioEngine.setDevice(for: app, deviceUID: newDeviceUID)
+                },
+                onDevicesSelected: { uids in
+                    audioEngine.setSelectedDeviceUIDs(for: app, to: uids)
+                },
+                onDeviceModeChange: { mode in
+                    audioEngine.setDeviceSelectionMode(for: app, to: mode)
+                },
+                onSelectFollowDefault: {
+                    audioEngine.setDevice(for: app, deviceUID: nil)
+                },
+                onAppActivate: {
+                    activateApp(pid: app.id, bundleID: app.bundleID)
+                },
+                onPinToggle: {
+                    if audioEngine.isPinned(app) {
+                        audioEngine.unpinApp(app.persistenceIdentifier)
+                    } else {
+                        audioEngine.pinApp(app)
+                    }
+                },
+                eqSettings: audioEngine.getEQSettings(for: app),
+                onEQChange: { settings in
+                    audioEngine.setEQSettings(settings, for: app)
+                },
+                isEQExpanded: expandedEQAppID == displayableApp.id,
+                onEQToggle: {
+                    toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
+                }
+            )
+            .id(displayableApp.id)
+        }
+    }
+
+    /// Row for a pinned inactive app (not currently producing audio)
+    @ViewBuilder
+    private func inactiveAppRow(info: PinnedAppInfo, displayableApp: DisplayableApp, scrollProxy: ScrollViewProxy) -> some View {
+        let identifier = info.persistenceIdentifier
+        InactiveAppRow(
+            appInfo: info,
+            icon: displayableApp.icon,
+            volume: audioEngine.getVolumeForInactive(identifier: identifier),
+            devices: audioEngine.outputDevices,
+            selectedDeviceUID: audioEngine.getDeviceRoutingForInactive(identifier: identifier),
+            selectedDeviceUIDs: audioEngine.getSelectedDeviceUIDsForInactive(identifier: identifier),
+            isFollowingDefault: audioEngine.isFollowingDefaultForInactive(identifier: identifier),
+            defaultDeviceUID: deviceVolumeMonitor.defaultDeviceUID,
+            deviceSelectionMode: audioEngine.getDeviceSelectionModeForInactive(identifier: identifier),
+            isMuted: audioEngine.getMuteForInactive(identifier: identifier),
+            maxVolumeBoost: audioEngine.settingsManager.appSettings.maxVolumeBoost,
+            onVolumeChange: { volume in
+                audioEngine.setVolumeForInactive(identifier: identifier, to: volume)
+            },
+            onMuteChange: { muted in
+                audioEngine.setMuteForInactive(identifier: identifier, to: muted)
+            },
+            onDeviceSelected: { newDeviceUID in
+                audioEngine.setDeviceRoutingForInactive(identifier: identifier, deviceUID: newDeviceUID)
+            },
+            onDevicesSelected: { uids in
+                audioEngine.setSelectedDeviceUIDsForInactive(identifier: identifier, to: uids)
+            },
+            onDeviceModeChange: { mode in
+                audioEngine.setDeviceSelectionModeForInactive(identifier: identifier, to: mode)
+            },
+            onSelectFollowDefault: {
+                audioEngine.setDeviceRoutingForInactive(identifier: identifier, deviceUID: nil)
+            },
+            onUnpin: {
+                audioEngine.unpinApp(identifier)
+            },
+            eqSettings: audioEngine.getEQSettingsForInactive(identifier: identifier),
+            onEQChange: { settings in
+                audioEngine.setEQSettingsForInactive(settings, identifier: identifier)
+            },
+            isEQExpanded: expandedEQAppID == displayableApp.id,
+            onEQToggle: {
+                toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
+            }
+        )
+        .id(displayableApp.id)
+    }
+
+    /// Toggle EQ panel for an app (shared between active and inactive rows)
+    private func toggleEQ(for appID: String, scrollProxy: ScrollViewProxy) {
+        guard !isEQAnimating else { return }
+        isEQAnimating = true
+
+        let isExpanding = expandedEQAppID != appID
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            if expandedEQAppID == appID {
+                expandedEQAppID = nil
+            } else {
+                expandedEQAppID = appID
+            }
+            if isExpanding {
+                scrollProxy.scrollTo(appID, anchor: .top)
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            isEQAnimating = false
+        }
     }
 
     // MARK: - Helpers

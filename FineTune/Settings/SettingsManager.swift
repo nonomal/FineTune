@@ -3,6 +3,14 @@ import Foundation
 import os
 import ServiceManagement
 
+// MARK: - Pinned App Info
+
+struct PinnedAppInfo: Codable, Equatable {
+    let persistenceIdentifier: String
+    let displayName: String
+    let bundleID: String?
+}
+
 // MARK: - App-Wide Settings Enums
 
 enum MenuBarIconStyle: String, Codable, CaseIterable, Identifiable {
@@ -58,7 +66,7 @@ final class SettingsManager {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
-        var version: Int = 6
+        var version: Int = 7
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
@@ -68,6 +76,8 @@ final class SettingsManager {
         var appDeviceSelectionMode: [String: DeviceSelectionMode] = [:]  // bundleID → selection mode
         var appSelectedDeviceUIDs: [String: [String]] = [:]  // bundleID → array of device UIDs for multi mode
         var lockedInputDeviceUID: String? = nil  // User's preferred input device (for input lock feature)
+        var pinnedApps: Set<String> = []  // Persistence identifiers of pinned apps
+        var pinnedAppInfo: [String: PinnedAppInfo] = [:]  // Persistence identifier → app metadata
     }
 
     init(directory: URL? = nil) {
@@ -171,6 +181,29 @@ final class SettingsManager {
         scheduleSave()
     }
 
+    // MARK: - Pinned Apps
+
+    func pinApp(_ identifier: String, info: PinnedAppInfo) {
+        settings.pinnedApps.insert(identifier)
+        settings.pinnedAppInfo[identifier] = info
+        scheduleSave()
+    }
+
+    func unpinApp(_ identifier: String) {
+        settings.pinnedApps.remove(identifier)
+        settings.pinnedAppInfo.removeValue(forKey: identifier)
+        scheduleSave()
+    }
+
+    func isPinned(_ identifier: String) -> Bool {
+        settings.pinnedApps.contains(identifier)
+    }
+
+    /// Returns metadata for all pinned apps
+    func getPinnedAppInfo() -> [PinnedAppInfo] {
+        settings.pinnedApps.compactMap { settings.pinnedAppInfo[$0] }
+    }
+
     // MARK: - App-Wide Settings
 
     var appSettings: AppSettings {
@@ -213,6 +246,8 @@ final class SettingsManager {
         settings.appDeviceRouting.removeAll()
         settings.appMutes.removeAll()
         settings.appEQSettings.removeAll()
+        settings.pinnedApps.removeAll()
+        settings.pinnedAppInfo.removeAll()
         settings.appSettings = AppSettings()
         settings.systemSoundsFollowsDefault = true
         settings.lockedInputDeviceUID = nil
