@@ -23,7 +23,7 @@
 ---
 
 <p align="center">
-  <img src="assets/screenshot-main.png" alt="FineTune showing per-app volume control with EQ and multi-device output" width="700">
+  <img src="assets/screenshot-main.png" alt="FineTune showing per-app volume control with EQ and multi-device output" width="750">
 </p>
 
 ## Features
@@ -38,8 +38,8 @@
 - **Menu bar app** — Lightweight, always accessible
 
 <p align="center">
-  <img src="assets/screenshot-input.png" alt="FineTune input device control" width="340">
-  <img src="assets/screenshot-settings.png" alt="FineTune settings panel" width="340">
+  <img src="assets/screenshot-input.png" alt="FineTune input device control" width="500">
+  <img src="assets/screenshot-settings.png" alt="FineTune settings panel" width="500">
 </p>
 
 ## Install
