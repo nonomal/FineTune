@@ -38,8 +38,8 @@
 - **Menu bar app** — Lightweight, always accessible
 
 <p align="center">
-  <img src="assets/screenshot-input.png" alt="FineTune input device control" width="450">
-  <img src="assets/screenshot-settings.png" alt="FineTune settings panel" width="450">
+  <img src="assets/screenshot-input.png" alt="FineTune input device control" width="400">
+  <img src="assets/screenshot-settings.png" alt="FineTune settings panel" width="400">
 </p>
 
 ## Install
