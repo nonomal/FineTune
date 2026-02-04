@@ -2,30 +2,103 @@
 import SwiftUI
 import UserNotifications
 import FluidMenuBarExtra
+import AppKit
 import os
 
 private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "App")
 
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    var audioEngine: AudioEngine?
+    
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let audioEngine = audioEngine else {
+            return
+        }
+        let urlHandler = URLHandler(audioEngine: audioEngine)
+
+        for url in urls {
+            urlHandler.handleURL(url)
+        }
+    }
+}
+
 @main
 struct FineTuneApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var audioEngine: AudioEngine
+    @StateObject private var updateManager = UpdateManager()
     @State private var showMenuBarExtra = true
 
+    /// Icon style captured at launch (doesn't change during runtime)
+    private let launchIconStyle: MenuBarIconStyle
+
+    /// Icon name captured at launch for SF Symbols
+    private let launchSystemImageName: String?
+
+    /// Icon name captured at launch for asset catalog
+    private let launchAssetImageName: String?
+
     var body: some Scene {
-        FluidMenuBarExtra("FineTune", image: "MenuBarIcon", isInserted: $showMenuBarExtra) {
-            MenuBarPopupView(
-                audioEngine: audioEngine,
-                deviceVolumeMonitor: audioEngine.deviceVolumeMonitor
-            )
+        // Use dual scenes with captured icon names - only one is visible based on icon type
+        FluidMenuBarExtra("FineTune", systemImage: launchSystemImageName ?? "speaker.wave.2", isInserted: systemIconBinding) {
+            menuBarContent
         }
 
-        Settings { EmptyView() }
+        FluidMenuBarExtra("FineTune", image: launchAssetImageName ?? "MenuBarIcon", isInserted: assetIconBinding) {
+            menuBarContent
+        }
+        .commands {
+            CommandGroup(replacing: .appSettings) { }
+        }
+    }
+
+    /// Show SF Symbol menu bar when launch style is a system symbol
+    private var systemIconBinding: Binding<Bool> {
+        Binding(
+            get: { showMenuBarExtra && launchIconStyle.isSystemSymbol },
+            set: { showMenuBarExtra = $0 }
+        )
+    }
+
+    /// Show asset catalog menu bar when launch style is not a system symbol
+    private var assetIconBinding: Binding<Bool> {
+        Binding(
+            get: { showMenuBarExtra && !launchIconStyle.isSystemSymbol },
+            set: { showMenuBarExtra = $0 }
+        )
+    }
+
+    @ViewBuilder
+    private var menuBarContent: some View {
+        MenuBarPopupView(
+            audioEngine: audioEngine,
+            deviceVolumeMonitor: audioEngine.deviceVolumeMonitor,
+            updateManager: updateManager,
+            launchIconStyle: launchIconStyle
+        )
     }
 
     init() {
         let settings = SettingsManager()
         let engine = AudioEngine(settingsManager: settings)
         _audioEngine = State(initialValue: engine)
+
+        // Pass engine to AppDelegate
+        _appDelegate.wrappedValue.audioEngine = engine
+
+        // Capture icon style at launch - requires restart to change
+        let iconStyle = settings.appSettings.menuBarIconStyle
+        launchIconStyle = iconStyle
+
+        // Capture the correct icon name based on type
+        if iconStyle.isSystemSymbol {
+            launchSystemImageName = iconStyle.iconName
+            launchAssetImageName = nil
+        } else {
+            launchSystemImageName = nil
+            launchAssetImageName = iconStyle.iconName
+        }
 
         // DeviceVolumeMonitor is now created and started inside AudioEngine
         // This ensures proper initialization order: deviceMonitor.start() -> deviceVolumeMonitor.start()

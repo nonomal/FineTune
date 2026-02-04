@@ -1,9 +1,9 @@
-// FineTune/Views/Rows/DeviceRow.swift
+// FineTune/Views/Rows/InputDeviceRow.swift
 import SwiftUI
 
-/// A row displaying a device with volume controls
-/// Used in the Output Devices section
-struct DeviceRow: View {
+/// A row displaying an input device (microphone) with volume controls
+/// Used in the Input Devices section
+struct InputDeviceRow: View {
     let device: AudioDevice
     let isDefault: Bool
     let volume: Float
@@ -45,14 +45,14 @@ struct DeviceRow: View {
             // Default device selector
             RadioButton(isSelected: isDefault, action: onSetDefault)
 
-            // Device icon (vibrancy-aware)
+            // Device icon - use mic as fallback for input devices
             Group {
                 if let icon = device.icon {
                     Image(nsImage: icon)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                 } else {
-                    Image(systemName: "speaker.wave.2")
+                    Image(systemName: "mic")
                         .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.secondary)
                 }
@@ -65,19 +65,19 @@ struct DeviceRow: View {
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Mute button
-            MuteButton(isMuted: showMutedIcon) {
+            // Mute button (mic icon)
+            InputMuteButton(isMuted: showMutedIcon) {
                 if showMutedIcon {
                     // Unmute: restore to default if at 0
                     if sliderValue == 0 {
                         sliderValue = defaultUnmuteVolume
                     }
                     if isMuted {
-                        onMuteToggle()  // Toggle system mute
+                        onMuteToggle()
                     }
                 } else {
                     // Mute
-                    onMuteToggle()  // Toggle system mute
+                    onMuteToggle()
                 }
             }
 
@@ -118,11 +118,16 @@ struct DeviceRow: View {
 
 // MARK: - Previews
 
-#Preview("Device Row - Default") {
+#Preview("Input Device Row - Default") {
     PreviewContainer {
         VStack(spacing: 0) {
-            DeviceRow(
-                device: MockData.sampleDevices[0],
+            InputDeviceRow(
+                device: AudioDevice(
+                    id: 1,
+                    uid: "built-in-mic",
+                    name: "MacBook Pro Microphone",
+                    icon: nil
+                ),
                 isDefault: true,
                 volume: 0.75,
                 isMuted: false,
@@ -131,8 +136,13 @@ struct DeviceRow: View {
                 onMuteToggle: {}
             )
 
-            DeviceRow(
-                device: MockData.sampleDevices[1],
+            InputDeviceRow(
+                device: AudioDevice(
+                    id: 2,
+                    uid: "usb-mic",
+                    name: "Blue Yeti",
+                    icon: nil
+                ),
                 isDefault: false,
                 volume: 1.0,
                 isMuted: false,
@@ -141,8 +151,13 @@ struct DeviceRow: View {
                 onMuteToggle: {}
             )
 
-            DeviceRow(
-                device: MockData.sampleDevices[2],
+            InputDeviceRow(
+                device: AudioDevice(
+                    id: 3,
+                    uid: "airpods-mic",
+                    name: "AirPods Pro",
+                    icon: nil
+                ),
                 isDefault: false,
                 volume: 0.5,
                 isMuted: true,
