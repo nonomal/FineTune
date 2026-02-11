@@ -8,6 +8,7 @@ struct DeviceRow: View {
     let isDefault: Bool
     let volume: Float
     let isMuted: Bool
+    let hasVolumeControl: Bool
     let onSetDefault: () -> Void
     let onVolumeChange: (Float) -> Void
     let onMuteToggle: () -> Void
@@ -26,6 +27,7 @@ struct DeviceRow: View {
         isDefault: Bool,
         volume: Float,
         isMuted: Bool,
+        hasVolumeControl: Bool = true,
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteToggle: @escaping () -> Void
@@ -34,6 +36,7 @@ struct DeviceRow: View {
         self.isDefault = isDefault
         self.volume = volume
         self.isMuted = isMuted
+        self.hasVolumeControl = hasVolumeControl
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
         self.onMuteToggle = onMuteToggle
@@ -66,46 +69,48 @@ struct DeviceRow: View {
                 .help(device.name)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Mute button
-            MuteButton(isMuted: showMutedIcon) {
-                if showMutedIcon {
-                    // Unmute: restore to default if at 0
-                    if sliderValue == 0 {
-                        sliderValue = defaultUnmuteVolume
-                    }
-                    if isMuted {
+            if hasVolumeControl {
+                // Mute button
+                MuteButton(isMuted: showMutedIcon) {
+                    if showMutedIcon {
+                        // Unmute: restore to default if at 0
+                        if sliderValue == 0 {
+                            sliderValue = defaultUnmuteVolume
+                        }
+                        if isMuted {
+                            onMuteToggle()  // Toggle system mute
+                        }
+                    } else {
+                        // Mute
                         onMuteToggle()  // Toggle system mute
                     }
-                } else {
-                    // Mute
-                    onMuteToggle()  // Toggle system mute
                 }
-            }
 
-            // Volume slider (Liquid Glass)
-            LiquidGlassSlider(
-                value: $sliderValue,
-                onEditingChanged: { editing in
-                    isEditing = editing
+                // Volume slider (Liquid Glass)
+                LiquidGlassSlider(
+                    value: $sliderValue,
+                    onEditingChanged: { editing in
+                        isEditing = editing
+                    }
+                )
+                .opacity(showMutedIcon ? 0.5 : 1.0)
+                .onChange(of: sliderValue) { _, newValue in
+                    onVolumeChange(Float(newValue))
+                    // Auto-unmute when slider moved while muted
+                    if isMuted && newValue > 0 {
+                        onMuteToggle()
+                    }
                 }
-            )
-            .opacity(showMutedIcon ? 0.5 : 1.0)
-            .onChange(of: sliderValue) { _, newValue in
-                onVolumeChange(Float(newValue))
-                // Auto-unmute when slider moved while muted
-                if isMuted && newValue > 0 {
-                    onMuteToggle()
-                }
-            }
 
-            // Editable volume percentage
-            EditablePercentage(
-                percentage: Binding(
-                    get: { Int(round(sliderValue * 100)) },
-                    set: { sliderValue = Double($0) / 100.0 }
-                ),
-                range: 0...100
-            )
+                // Editable volume percentage
+                EditablePercentage(
+                    percentage: Binding(
+                        get: { Int(round(sliderValue * 100)) },
+                        set: { sliderValue = Double($0) / 100.0 }
+                    ),
+                    range: 0...100
+                )
+            }
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
         .hoverableRow()

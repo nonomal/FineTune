@@ -12,7 +12,10 @@ extension AudioDeviceID {
             mScope: kAudioDevicePropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
         )
-        return AudioObjectHasProperty(self, &address)
+        guard AudioObjectHasProperty(self, &address) else { return false }
+        var settable: DarwinBoolean = false
+        let err = AudioObjectIsPropertySettable(self, &address, &settable)
+        return err == noErr && settable.boolValue
     }
 }
 

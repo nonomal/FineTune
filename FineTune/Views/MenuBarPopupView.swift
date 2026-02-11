@@ -441,6 +441,7 @@ struct MenuBarPopupView: View {
                         isDefault: device.id == deviceVolumeMonitor.defaultDeviceID,
                         volume: deviceVolumeMonitor.volumes[device.id] ?? 1.0,
                         isMuted: deviceVolumeMonitor.muteStates[device.id] ?? false,
+                        hasVolumeControl: audioEngine.hasVolumeControl(for: device.id),
                         onSetDefault: {
                             deviceVolumeMonitor.setDefaultDevice(device.id)
                         },

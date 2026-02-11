@@ -45,16 +45,19 @@ final class AudioEngine {
     private var lastKnownDefaultInputDeviceUID: String?
 
     var outputDevices: [AudioDevice] {
+        deviceMonitor.outputDevices
+    }
+
+    /// Whether a device supports software volume control (CoreAudio or DDC).
+    /// Devices without volume control still appear in the list but without slider/mute UI.
+    func hasVolumeControl(for deviceID: AudioDeviceID) -> Bool {
         #if !APP_STORE
-        // Before DDC probe completes, show all devices (don't prematurely hide monitors)
-        guard ddcController.probeCompleted else {
-            return deviceMonitor.outputDevices
-        }
-        return deviceMonitor.outputDevices.filter { device in
-            device.id.hasOutputVolumeControl() || ddcController.isDDCBacked(device.id)
-        }
+        // Before DDC probe completes, assume all devices have volume control
+        // to avoid premature hiding of controls on monitors that may be DDC-backed
+        if !ddcController.probeCompleted { return true }
+        return deviceID.hasOutputVolumeControl() || ddcController.isDDCBacked(deviceID)
         #else
-        return deviceMonitor.outputDevices
+        return deviceID.hasOutputVolumeControl()
         #endif
     }
 
