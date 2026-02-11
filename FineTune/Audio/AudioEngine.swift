@@ -41,6 +41,9 @@ final class AudioEngine {
     /// Tracks the last known default output device UID for disconnect detection
     private var lastKnownDefaultDeviceUID: String?
 
+    /// Tracks the last known default input device UID for disconnect detection
+    private var lastKnownDefaultInputDeviceUID: String?
+
     var outputDevices: [AudioDevice] {
         #if !APP_STORE
         // Before DDC probe completes, show all devices (don't prematurely hide monitors)
@@ -139,6 +142,24 @@ final class AudioEngine {
         return nil
     }
 
+    /// Finds the highest-priority connected input device excluding the given UID.
+    func findPriorityFallbackInputDevice(excluding deviceUID: String) -> (uid: String, name: String)? {
+        let priorityOrder = settingsManager.inputDevicePriorityOrder
+        let connectedDevices = inputDevices
+        let connectedByUID = Dictionary(connectedDevices.map { ($0.uid, $0) }, uniquingKeysWith: { _, latest in latest })
+
+        for uid in priorityOrder {
+            guard uid != deviceUID, let device = connectedByUID[uid] else { continue }
+            return (uid: device.uid, name: device.name)
+        }
+
+        if let device = connectedDevices.first(where: { $0.uid != deviceUID }) {
+            return (uid: device.uid, name: device.name)
+        }
+
+        return nil
+    }
+
     init(settingsManager: SettingsManager? = nil) {
         let manager = settingsManager ?? SettingsManager()
         self.settingsManager = manager
@@ -229,6 +250,7 @@ final class AudioEngine {
             applyPersistedSettings()
             registerNewDevicesInPriority()
             lastKnownDefaultDeviceUID = deviceVolumeMonitor.defaultDeviceUID
+            lastKnownDefaultInputDeviceUID = deviceVolumeMonitor.defaultInputDeviceUID
 
             // Restore locked input device if feature is enabled
             if manager.appSettings.lockInputDevice {
@@ -1087,10 +1109,32 @@ final class AudioEngine {
     /// Handles changes to the default input device.
     /// Uses timing heuristic to distinguish auto-switch (from device connection) vs user action.
     private func handleDefaultInputDeviceChanged(_ newDefaultInputUID: String) {
+        let oldDefaultInputUID = lastKnownDefaultInputDeviceUID
+        lastKnownDefaultInputDeviceUID = newDefaultInputUID
+
         // If WE initiated this change, just reset flag and return
         if didInitiateInputSwitch {
             didInitiateInputSwitch = false
             return
+        }
+
+        // If the old default input device was disconnected, override to priority fallback.
+        // This handles the race where default-changed fires before device-list-changed.
+        if let oldUID = oldDefaultInputUID,
+           let oldDevice = deviceMonitor.inputDevice(for: oldUID),
+           !oldDevice.id.isDeviceAlive() {
+            if let fallback = findPriorityFallbackInputDevice(excluding: oldUID),
+               fallback.uid != newDefaultInputUID,
+               let fallbackDevice = deviceMonitor.inputDevice(for: fallback.uid) {
+                didInitiateInputSwitch = true
+                deviceVolumeMonitor.setDefaultInputDevice(fallbackDevice.id)
+                logger.info("Default input overridden to priority fallback: \(fallback.name)")
+                // Also update the lock if enabled
+                if settingsManager.appSettings.lockInputDevice {
+                    settingsManager.setLockedInputDeviceUID(fallback.uid)
+                }
+                return
+            }
         }
 
         // If lock is disabled, let system control input
@@ -1156,13 +1200,37 @@ final class AudioEngine {
         deviceVolumeMonitor.setDefaultInputDevice(device.id)
     }
 
-    /// Handles locked input device disconnect - falls back to built-in mic.
+    /// Handles input device disconnect — uses priority fallback, then built-in mic.
     private func handleInputDeviceDisconnected(_ deviceUID: String) {
-        // If the locked device disconnected, fall back to built-in mic
+        // Snapshot before async callbacks can update it
+        let wasDefaultInput = deviceUID == deviceVolumeMonitor.defaultInputDeviceUID
+
+        let priorityFallback: AudioDevice? = findPriorityFallbackInputDevice(excluding: deviceUID)
+            .flatMap { deviceMonitor.inputDevice(for: $0.uid) }
+
+        // If the disconnected device was the default input, override to priority fallback
+        if wasDefaultInput,
+           let fallbackDevice = priorityFallback {
+            didInitiateInputSwitch = true
+            deviceVolumeMonitor.setDefaultInputDevice(fallbackDevice.id)
+            logger.info("Default input overridden to priority fallback: \(fallbackDevice.name)")
+        }
+
+        // If the locked device disconnected, update the lock to the fallback (or built-in mic)
         guard settingsManager.appSettings.lockInputDevice,
               settingsManager.lockedInputDeviceUID == deviceUID else { return }
 
-        logger.info("Locked input device disconnected, falling back to built-in mic")
-        lockToBuiltInMicrophone()
+        if let fallbackDevice = priorityFallback {
+            logger.info("Locked input device disconnected, falling back to priority: \(fallbackDevice.name)")
+            if wasDefaultInput {
+                // Default already switched above, just update the lock setting
+                settingsManager.setLockedInputDeviceUID(fallbackDevice.uid)
+            } else {
+                setLockedInputDevice(fallbackDevice)
+            }
+        } else {
+            logger.info("Locked input device disconnected, falling back to built-in mic")
+            lockToBuiltInMicrophone()
+        }
     }
 }
