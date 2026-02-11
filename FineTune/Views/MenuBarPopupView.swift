@@ -72,8 +72,8 @@ struct MenuBarPopupView: View {
                     Spacer()
                     if isEditingDevicePriority {
                         Text("Drag or type a number to set priority")
-                            .font(.system(size: 10))
-                            .foregroundStyle(DesignTokens.Colors.textTertiary.opacity(0.7))
+                            .font(.system(size: 11))
+                            .foregroundStyle(DesignTokens.Colors.textSecondary)
                     } else {
                         defaultDevicesStatus
                     }
