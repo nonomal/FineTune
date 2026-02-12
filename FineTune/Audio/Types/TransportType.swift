@@ -2,13 +2,8 @@
 import AudioToolbox
 
 /// Represents how an audio device connects to the system.
-///
-/// Future additions if needed:
-/// - `displayPort` (kAudioDeviceTransportTypeDisplayPort)
-/// - `pci` (kAudioDeviceTransportTypePCI)
-/// - `fireWire` (kAudioDeviceTransportTypeFireWire)
-/// - See kAudioDeviceTransportType* constants in AudioHardware.h
-enum TransportType: Sendable {
+/// See kAudioDeviceTransportType* constants in AudioHardware.h
+enum TransportType: Sendable, Hashable, CustomStringConvertible {
     case builtIn
     case usb
     case bluetooth
@@ -17,6 +12,7 @@ enum TransportType: Sendable {
     case virtual
     case thunderbolt
     case hdmi
+    case displayPort
     case aggregate
     case unknown
 
@@ -30,8 +26,25 @@ enum TransportType: Sendable {
         case kAudioDeviceTransportTypeVirtual:     self = .virtual
         case kAudioDeviceTransportTypeThunderbolt: self = .thunderbolt
         case kAudioDeviceTransportTypeHDMI:        self = .hdmi
+        case kAudioDeviceTransportTypeDisplayPort: self = .displayPort
         case kAudioDeviceTransportTypeAggregate:   self = .aggregate
         default:                                    self = .unknown
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .builtIn:     return "builtIn"
+        case .usb:         return "usb"
+        case .bluetooth:   return "bluetooth"
+        case .bluetoothLE: return "bluetoothLE"
+        case .airPlay:     return "airPlay"
+        case .virtual:     return "virtual"
+        case .thunderbolt: return "thunderbolt"
+        case .hdmi:        return "hdmi"
+        case .displayPort: return "displayPort"
+        case .aggregate:   return "aggregate"
+        case .unknown:     return "unknown"
         }
     }
 
@@ -47,6 +60,7 @@ enum TransportType: Sendable {
         case .virtual:     return "waveform"
         case .thunderbolt: return "bolt.horizontal"
         case .hdmi:        return "tv"
+        case .displayPort: return "tv"
         case .aggregate:   return "speaker.wave.2"
         case .unknown:     return "hifispeaker"
         }

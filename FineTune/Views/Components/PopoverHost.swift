@@ -21,6 +21,9 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
         if isPresented {
             if context.coordinator.panel == nil {
                 context.coordinator.showPanel(from: nsView, content: content)
+            } else {
+                // Update content when state changes while panel is open
+                context.coordinator.updateContent(content)
             }
         } else {
             context.coordinator.dismissPanel()
@@ -34,6 +37,7 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
     class Coordinator: NSObject {
         @Binding var isPresented: Bool
         var panel: NSPanel?
+        var hostingView: NSHostingView<AnyView>?
         var localEventMonitor: Any?
         var globalEventMonitor: Any?
         var appDeactivateObserver: NSObjectProtocol?
@@ -60,11 +64,13 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
 
             panel.becomesKeyOnlyIfNeeded = true
 
-            // Create hosting view with content
-            let hostingView = NSHostingView(rootView: content())
-            hostingView.frame.size = hostingView.fittingSize
-            panel.contentView = hostingView
-            panel.setContentSize(hostingView.fittingSize)
+            // Create hosting view with content, forcing dark color scheme
+            // Use AnyView to allow rootView updates without replacing the hosting view
+            let hosting: NSHostingView<AnyView> = NSHostingView(rootView: AnyView(content().preferredColorScheme(.dark)))
+            hosting.frame.size = hosting.fittingSize
+            panel.contentView = hosting
+            panel.setContentSize(hosting.fittingSize)
+            self.hostingView = hosting
 
             // Position below trigger
             let parentFrame = parentView.convert(parentView.bounds, to: nil)
@@ -112,6 +118,18 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             }
         }
 
+        func updateContent<V: View>(_ content: () -> V) {
+            guard let hostingView = hostingView else { return }
+            // Update existing hosting view's rootView instead of replacing it
+            // This allows SwiftUI to perform efficient diffing without flickering
+            hostingView.rootView = AnyView(content().preferredColorScheme(.dark))
+            // Resize panel if content size changed
+            let newSize = hostingView.fittingSize
+            if let panel = panel, panel.frame.size != newSize {
+                panel.setContentSize(newSize)
+            }
+        }
+
         func dismissPanel() {
             if let monitor = localEventMonitor {
                 NSEvent.removeMonitor(monitor)
@@ -131,6 +149,7 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             }
             panel?.orderOut(nil)
             panel = nil
+            hostingView = nil
             if isPresented {
                 isPresented = false
             }

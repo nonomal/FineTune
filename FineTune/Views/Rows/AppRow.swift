@@ -6,42 +6,47 @@ import Combine
 /// Used in the Apps section
 struct AppRow: View {
     let app: AudioApp
-    let volume: Float  // Linear gain 0-2
+    let volume: Float  // Linear gain 0-maxVolumeBoost
     let audioLevel: Float
     let devices: [AudioDevice]
-    let selectedDeviceUID: String
+    let selectedDeviceUID: String  // For single mode
+    let selectedDeviceUIDs: Set<String>  // For multi mode
+    let isFollowingDefault: Bool
+    let defaultDeviceUID: String?
+    let deviceSelectionMode: DeviceSelectionMode
     let isMutedExternal: Bool  // Mute state from AudioEngine
+    let maxVolumeBoost: Float  // Maximum volume multiplier (e.g., 2.0 = 200%, 4.0 = 400%)
+    let isPinned: Bool  // Whether app is pinned to top
     let onVolumeChange: (Float) -> Void
     let onMuteChange: (Bool) -> Void
-    let onDeviceSelected: (String) -> Void
+    let onDeviceSelected: (String) -> Void  // Single mode
+    let onDevicesSelected: (Set<String>) -> Void  // Multi mode
+    let onDeviceModeChange: (DeviceSelectionMode) -> Void
+    let onSelectFollowDefault: () -> Void
     let onAppActivate: () -> Void
+    let onPinToggle: () -> Void  // Toggle pin state
     let eqSettings: EQSettings
     let onEQChange: (EQSettings) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
 
-    @State private var sliderValue: Double  // 0-1, log-mapped position
-    @State private var isEditing = false
+    @State private var isRowHovered = false
     @State private var isIconHovered = false
-    @State private var isEQButtonHovered = false
+    @State private var isPinButtonHovered = false
     @State private var localEQSettings: EQSettings
 
-    /// Show muted icon when explicitly muted OR volume is 0
-    private var showMutedIcon: Bool { isMutedExternal || sliderValue == 0 }
-
-    /// EQ button color following same pattern as MuteButton
-    private var eqButtonColor: Color {
-        if isEQExpanded {
+    /// Pin button color - visible when pinned or row is hovered
+    private var pinButtonColor: Color {
+        if isPinned {
             return DesignTokens.Colors.interactiveActive
-        } else if isEQButtonHovered {
+        } else if isPinButtonHovered {
             return DesignTokens.Colors.interactiveHover
-        } else {
+        } else if isRowHovered {
             return DesignTokens.Colors.interactiveDefault
+        } else {
+            return .clear
         }
     }
-
-    /// Default volume to restore when unmuting from 0 (50% = unity gain)
-    private let defaultUnmuteVolume: Double = 0.5
 
     init(
         app: AudioApp,
@@ -49,11 +54,21 @@ struct AppRow: View {
         audioLevel: Float = 0,
         devices: [AudioDevice],
         selectedDeviceUID: String,
+        selectedDeviceUIDs: Set<String> = [],
+        isFollowingDefault: Bool = true,
+        defaultDeviceUID: String? = nil,
+        deviceSelectionMode: DeviceSelectionMode = .single,
         isMuted: Bool = false,
+        maxVolumeBoost: Float = 2.0,
+        isPinned: Bool = false,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteChange: @escaping (Bool) -> Void,
         onDeviceSelected: @escaping (String) -> Void,
+        onDevicesSelected: @escaping (Set<String>) -> Void = { _ in },
+        onDeviceModeChange: @escaping (DeviceSelectionMode) -> Void = { _ in },
+        onSelectFollowDefault: @escaping () -> Void = {},
         onAppActivate: @escaping () -> Void = {},
+        onPinToggle: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
         isEQExpanded: Bool = false,
@@ -64,17 +79,25 @@ struct AppRow: View {
         self.audioLevel = audioLevel
         self.devices = devices
         self.selectedDeviceUID = selectedDeviceUID
+        self.selectedDeviceUIDs = selectedDeviceUIDs
+        self.isFollowingDefault = isFollowingDefault
+        self.defaultDeviceUID = defaultDeviceUID
+        self.deviceSelectionMode = deviceSelectionMode
         self.isMutedExternal = isMuted
+        self.maxVolumeBoost = maxVolumeBoost
+        self.isPinned = isPinned
         self.onVolumeChange = onVolumeChange
         self.onMuteChange = onMuteChange
         self.onDeviceSelected = onDeviceSelected
+        self.onDevicesSelected = onDevicesSelected
+        self.onDeviceModeChange = onDeviceModeChange
+        self.onSelectFollowDefault = onSelectFollowDefault
         self.onAppActivate = onAppActivate
+        self.onPinToggle = onPinToggle
         self.eqSettings = eqSettings
         self.onEQChange = onEQChange
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
-        // Convert linear gain to slider position
-        self._sliderValue = State(initialValue: VolumeMapping.gainToSlider(volume))
         // Initialize local EQ state for reactive UI updates
         self._localEQSettings = State(initialValue: eqSettings)
     }
@@ -83,6 +106,27 @@ struct AppRow: View {
         ExpandableGlassRow(isExpanded: isEQExpanded) {
             // Header: Main row content (always visible)
             HStack(spacing: DesignTokens.Spacing.sm) {
+                // Pin/unpin star button - left of app icon
+                Button {
+                    onPinToggle()
+                } label: {
+                    Image(systemName: isPinned ? "star.fill" : "star")
+                        .font(.system(size: 11))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(pinButtonColor)
+                        .frame(
+                            minWidth: DesignTokens.Dimensions.minTouchTarget,
+                            minHeight: DesignTokens.Dimensions.minTouchTarget
+                        )
+                        .contentShape(Rectangle())
+                        .scaleEffect(isPinButtonHovered ? 1.1 : 1.0)
+                }
+                .buttonStyle(.plain)
+                .onHover { isPinButtonHovered = $0 }
+                .help(isPinned ? "Unpin app" : "Pin app to top")
+                .animation(DesignTokens.Animation.hover, value: pinButtonColor)
+                .animation(DesignTokens.Animation.quick, value: isPinButtonHovered)
+
                 // App icon - clickable to activate app
                 Image(nsImage: app.icon)
                     .resizable()
@@ -105,88 +149,33 @@ struct AppRow: View {
                 Text(app.name)
                     .font(DesignTokens.Typography.rowName)
                     .lineLimit(1)
+                    .help(app.name)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Controls section - fixed width so sliders align across rows
-                HStack(spacing: DesignTokens.Spacing.sm) {
-                    // Mute button
-                    MuteButton(isMuted: showMutedIcon) {
-                        if showMutedIcon {
-                            // Unmute: restore to default if at 0
-                            if sliderValue == 0 {
-                                sliderValue = defaultUnmuteVolume
-                            }
-                            onMuteChange(false)
-                        } else {
-                            // Mute
-                            onMuteChange(true)
-                        }
-                    }
-
-                    // Volume slider with unity marker (Liquid Glass)
-                    LiquidGlassSlider(
-                        value: $sliderValue,
-                        showUnityMarker: true,
-                        onEditingChanged: { editing in
-                            isEditing = editing
-                        }
-                    )
-                    .frame(width: DesignTokens.Dimensions.sliderWidth)
-                    .opacity(showMutedIcon ? 0.5 : 1.0)
-                    .onChange(of: sliderValue) { _, newValue in
-                        let gain = VolumeMapping.sliderToGain(newValue)
-                        onVolumeChange(gain)
-                        // Auto-unmute when slider moved while muted
-                        if isMutedExternal {
-                            onMuteChange(false)
-                        }
-                    }
-
-                    // Volume percentage (0-200% matching slider position)
-                    Text("\(Int(sliderValue * 200))%")
-                        .percentageStyle()
-
-                    // VU Meter (shows gray bars when muted or volume is 0)
-                    VUMeter(level: audioLevel, isMuted: showMutedIcon)
-
-                    // Device picker
-                    DevicePicker(
-                        devices: devices,
-                        selectedDeviceUID: selectedDeviceUID,
-                        onDeviceSelected: onDeviceSelected
-                    )
-
-                    // EQ button at end of row (animates to X when expanded)
-                    Button {
-                        onEQToggle()
-                    } label: {
-                        ZStack {
-                            Image(systemName: "slider.vertical.3")
-                                .opacity(isEQExpanded ? 0 : 1)
-                                .rotationEffect(.degrees(isEQExpanded ? 90 : 0))
-
-                            Image(systemName: "xmark")
-                                .opacity(isEQExpanded ? 1 : 0)
-                                .rotationEffect(.degrees(isEQExpanded ? 0 : -90))
-                        }
-                        .font(.system(size: 12))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(eqButtonColor)
-                        .frame(
-                            minWidth: DesignTokens.Dimensions.minTouchTarget,
-                            minHeight: DesignTokens.Dimensions.minTouchTarget
-                        )
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { isEQButtonHovered = $0 }
-                    .help(isEQExpanded ? "Close Equalizer" : "Equalizer")
-                    .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEQExpanded)
-                    .animation(DesignTokens.Animation.hover, value: isEQButtonHovered)
-                }
-                .frame(width: DesignTokens.Dimensions.controlsWidth)
+                // Shared controls section
+                AppRowControls(
+                    volume: volume,
+                    isMuted: isMutedExternal,
+                    audioLevel: audioLevel,
+                    devices: devices,
+                    selectedDeviceUID: selectedDeviceUID,
+                    selectedDeviceUIDs: selectedDeviceUIDs,
+                    isFollowingDefault: isFollowingDefault,
+                    defaultDeviceUID: defaultDeviceUID,
+                    deviceSelectionMode: deviceSelectionMode,
+                    maxVolumeBoost: maxVolumeBoost,
+                    isEQExpanded: isEQExpanded,
+                    onVolumeChange: onVolumeChange,
+                    onMuteChange: onMuteChange,
+                    onDeviceSelected: onDeviceSelected,
+                    onDevicesSelected: onDevicesSelected,
+                    onDeviceModeChange: onDeviceModeChange,
+                    onSelectFollowDefault: onSelectFollowDefault,
+                    onEQToggle: onEQToggle
+                )
             }
             .frame(height: DesignTokens.Dimensions.rowContentHeight)
+            .onHover { isRowHovered = $0 }
         } expandedContent: {
             // EQ panel - shown when expanded
             // SwiftUI calculates natural height via conditional rendering
@@ -201,11 +190,6 @@ struct AppRow: View {
                 }
             )
             .padding(.top, DesignTokens.Spacing.sm)
-        }
-        .onChange(of: volume) { _, newValue in
-            // Only sync from external changes when user is NOT dragging
-            guard !isEditing else { return }
-            sliderValue = VolumeMapping.gainToSlider(newValue)
         }
         .onChange(of: eqSettings) { _, newValue in
             // Sync from parent when external EQ settings change
@@ -223,12 +207,22 @@ struct AppRowWithLevelPolling: View {
     let isMuted: Bool
     let devices: [AudioDevice]
     let selectedDeviceUID: String
+    let selectedDeviceUIDs: Set<String>
+    let isFollowingDefault: Bool
+    let defaultDeviceUID: String?
+    let deviceSelectionMode: DeviceSelectionMode
+    let maxVolumeBoost: Float
+    let isPinned: Bool  // Whether app is pinned to top
     let getAudioLevel: () -> Float
     let isPopupVisible: Bool
     let onVolumeChange: (Float) -> Void
     let onMuteChange: (Bool) -> Void
     let onDeviceSelected: (String) -> Void
+    let onDevicesSelected: (Set<String>) -> Void
+    let onDeviceModeChange: (DeviceSelectionMode) -> Void
+    let onSelectFollowDefault: () -> Void
     let onAppActivate: () -> Void
+    let onPinToggle: () -> Void  // Toggle pin state
     let eqSettings: EQSettings
     let onEQChange: (EQSettings) -> Void
     let isEQExpanded: Bool
@@ -243,12 +237,22 @@ struct AppRowWithLevelPolling: View {
         isMuted: Bool,
         devices: [AudioDevice],
         selectedDeviceUID: String,
+        selectedDeviceUIDs: Set<String> = [],
+        isFollowingDefault: Bool = true,
+        defaultDeviceUID: String? = nil,
+        deviceSelectionMode: DeviceSelectionMode = .single,
+        maxVolumeBoost: Float = 2.0,
+        isPinned: Bool = false,
         getAudioLevel: @escaping () -> Float,
         isPopupVisible: Bool = true,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteChange: @escaping (Bool) -> Void,
         onDeviceSelected: @escaping (String) -> Void,
+        onDevicesSelected: @escaping (Set<String>) -> Void = { _ in },
+        onDeviceModeChange: @escaping (DeviceSelectionMode) -> Void = { _ in },
+        onSelectFollowDefault: @escaping () -> Void = {},
         onAppActivate: @escaping () -> Void = {},
+        onPinToggle: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
         isEQExpanded: Bool = false,
@@ -259,12 +263,22 @@ struct AppRowWithLevelPolling: View {
         self.isMuted = isMuted
         self.devices = devices
         self.selectedDeviceUID = selectedDeviceUID
+        self.selectedDeviceUIDs = selectedDeviceUIDs
+        self.isFollowingDefault = isFollowingDefault
+        self.defaultDeviceUID = defaultDeviceUID
+        self.deviceSelectionMode = deviceSelectionMode
+        self.maxVolumeBoost = maxVolumeBoost
+        self.isPinned = isPinned
         self.getAudioLevel = getAudioLevel
         self.isPopupVisible = isPopupVisible
         self.onVolumeChange = onVolumeChange
         self.onMuteChange = onMuteChange
         self.onDeviceSelected = onDeviceSelected
+        self.onDevicesSelected = onDevicesSelected
+        self.onDeviceModeChange = onDeviceModeChange
+        self.onSelectFollowDefault = onSelectFollowDefault
         self.onAppActivate = onAppActivate
+        self.onPinToggle = onPinToggle
         self.eqSettings = eqSettings
         self.onEQChange = onEQChange
         self.isEQExpanded = isEQExpanded
@@ -278,11 +292,21 @@ struct AppRowWithLevelPolling: View {
             audioLevel: displayLevel,
             devices: devices,
             selectedDeviceUID: selectedDeviceUID,
+            selectedDeviceUIDs: selectedDeviceUIDs,
+            isFollowingDefault: isFollowingDefault,
+            defaultDeviceUID: defaultDeviceUID,
+            deviceSelectionMode: deviceSelectionMode,
             isMuted: isMuted,
+            maxVolumeBoost: maxVolumeBoost,
+            isPinned: isPinned,
             onVolumeChange: onVolumeChange,
             onMuteChange: onMuteChange,
             onDeviceSelected: onDeviceSelected,
+            onDevicesSelected: onDevicesSelected,
+            onDeviceModeChange: onDeviceModeChange,
+            onSelectFollowDefault: onSelectFollowDefault,
             onAppActivate: onAppActivate,
+            onPinToggle: onPinToggle,
             eqSettings: eqSettings,
             onEQChange: onEQChange,
             isEQExpanded: isEQExpanded,

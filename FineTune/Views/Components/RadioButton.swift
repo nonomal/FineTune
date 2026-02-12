@@ -10,9 +10,9 @@ struct RadioButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            Image(systemName: isSelected ? "inset.filled.circle" : "circle")
                 .font(.system(size: 14))
-                .symbolRenderingMode(.hierarchical)  // Vibrancy support
+                .symbolRenderingMode(isSelected ? .monochrome : .hierarchical)
                 .foregroundStyle(isSelected ? DesignTokens.Colors.defaultDevice : buttonColor)
                 .frame(
                     minWidth: DesignTokens.Dimensions.minTouchTarget,

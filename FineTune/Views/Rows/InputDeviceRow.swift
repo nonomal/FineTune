@@ -1,14 +1,13 @@
-// FineTune/Views/Rows/DeviceRow.swift
+// FineTune/Views/Rows/InputDeviceRow.swift
 import SwiftUI
 
-/// A row displaying a device with volume controls
-/// Used in the Output Devices section
-struct DeviceRow: View {
+/// A row displaying an input device (microphone) with volume controls
+/// Used in the Input Devices section
+struct InputDeviceRow: View {
     let device: AudioDevice
     let isDefault: Bool
     let volume: Float
     let isMuted: Bool
-    let hasVolumeControl: Bool
     let onSetDefault: () -> Void
     let onVolumeChange: (Float) -> Void
     let onMuteToggle: () -> Void
@@ -27,7 +26,6 @@ struct DeviceRow: View {
         isDefault: Bool,
         volume: Float,
         isMuted: Bool,
-        hasVolumeControl: Bool = true,
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteToggle: @escaping () -> Void
@@ -36,7 +34,6 @@ struct DeviceRow: View {
         self.isDefault = isDefault
         self.volume = volume
         self.isMuted = isMuted
-        self.hasVolumeControl = hasVolumeControl
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
         self.onMuteToggle = onMuteToggle
@@ -48,14 +45,14 @@ struct DeviceRow: View {
             // Default device selector
             RadioButton(isSelected: isDefault, action: onSetDefault)
 
-            // Device icon (vibrancy-aware)
+            // Device icon - use mic as fallback for input devices
             Group {
                 if let icon = device.icon {
                     Image(nsImage: icon)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                 } else {
-                    Image(systemName: "speaker.wave.2")
+                    Image(systemName: "mic")
                         .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.secondary)
                 }
@@ -66,51 +63,48 @@ struct DeviceRow: View {
             Text(device.name)
                 .font(isDefault ? DesignTokens.Typography.rowNameBold : DesignTokens.Typography.rowName)
                 .lineLimit(1)
-                .help(device.name)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if hasVolumeControl {
-                // Mute button
-                MuteButton(isMuted: showMutedIcon) {
-                    if showMutedIcon {
-                        // Unmute: restore to default if at 0
-                        if sliderValue == 0 {
-                            sliderValue = defaultUnmuteVolume
-                        }
-                        if isMuted {
-                            onMuteToggle()  // Toggle system mute
-                        }
-                    } else {
-                        // Mute
-                        onMuteToggle()  // Toggle system mute
+            // Mute button (mic icon)
+            InputMuteButton(isMuted: showMutedIcon) {
+                if showMutedIcon {
+                    // Unmute: restore to default if at 0
+                    if sliderValue == 0 {
+                        sliderValue = defaultUnmuteVolume
                     }
-                }
-
-                // Volume slider (Liquid Glass)
-                LiquidGlassSlider(
-                    value: $sliderValue,
-                    onEditingChanged: { editing in
-                        isEditing = editing
-                    }
-                )
-                .opacity(showMutedIcon ? 0.5 : 1.0)
-                .onChange(of: sliderValue) { _, newValue in
-                    onVolumeChange(Float(newValue))
-                    // Auto-unmute when slider moved while muted
-                    if isMuted && newValue > 0 {
+                    if isMuted {
                         onMuteToggle()
                     }
+                } else {
+                    // Mute
+                    onMuteToggle()
                 }
-
-                // Editable volume percentage
-                EditablePercentage(
-                    percentage: Binding(
-                        get: { Int(round(sliderValue * 100)) },
-                        set: { sliderValue = Double($0) / 100.0 }
-                    ),
-                    range: 0...100
-                )
             }
+
+            // Volume slider (Liquid Glass)
+            LiquidGlassSlider(
+                value: $sliderValue,
+                onEditingChanged: { editing in
+                    isEditing = editing
+                }
+            )
+            .opacity(showMutedIcon ? 0.5 : 1.0)
+            .onChange(of: sliderValue) { _, newValue in
+                onVolumeChange(Float(newValue))
+                // Auto-unmute when slider moved while muted
+                if isMuted && newValue > 0 {
+                    onMuteToggle()
+                }
+            }
+
+            // Editable volume percentage
+            EditablePercentage(
+                percentage: Binding(
+                    get: { Int(round(sliderValue * 100)) },
+                    set: { sliderValue = Double($0) / 100.0 }
+                ),
+                range: 0...100
+            )
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
         .hoverableRow()
@@ -124,11 +118,16 @@ struct DeviceRow: View {
 
 // MARK: - Previews
 
-#Preview("Device Row - Default") {
+#Preview("Input Device Row - Default") {
     PreviewContainer {
         VStack(spacing: 0) {
-            DeviceRow(
-                device: MockData.sampleDevices[0],
+            InputDeviceRow(
+                device: AudioDevice(
+                    id: 1,
+                    uid: "built-in-mic",
+                    name: "MacBook Pro Microphone",
+                    icon: nil
+                ),
                 isDefault: true,
                 volume: 0.75,
                 isMuted: false,
@@ -137,8 +136,13 @@ struct DeviceRow: View {
                 onMuteToggle: {}
             )
 
-            DeviceRow(
-                device: MockData.sampleDevices[1],
+            InputDeviceRow(
+                device: AudioDevice(
+                    id: 2,
+                    uid: "usb-mic",
+                    name: "Blue Yeti",
+                    icon: nil
+                ),
                 isDefault: false,
                 volume: 1.0,
                 isMuted: false,
@@ -147,8 +151,13 @@ struct DeviceRow: View {
                 onMuteToggle: {}
             )
 
-            DeviceRow(
-                device: MockData.sampleDevices[2],
+            InputDeviceRow(
+                device: AudioDevice(
+                    id: 3,
+                    uid: "airpods-mic",
+                    name: "AirPods Pro",
+                    icon: nil
+                ),
                 isDefault: false,
                 volume: 0.5,
                 isMuted: true,

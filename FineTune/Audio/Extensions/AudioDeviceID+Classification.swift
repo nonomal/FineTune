@@ -64,8 +64,58 @@ extension AudioDeviceID {
 
         // Beats
         if name.contains("Beats") { return "beats.headphones" }
+        
+        // Mac variants
+        if name.contains("Mac Studio") { return "macstudio.fill" }
+        if name.contains("Mac mini") { return "macmini.fill" }
+        if name.contains("MacBook") { return "macbook" }
+        if name.contains("iMac") { return "desktopcomputer" }
+        
+        // Display speakers
+        if name.contains("Studio Display") { return "display" }
+        if name.contains("Pro Display XDR") { return "display" }
 
         // Fall back to transport type default
         return transport.defaultIconSymbol
+    }
+
+    /// Returns an appropriate SF Symbol name for input devices based on device name and transport type.
+    /// Used as fallback when kAudioDevicePropertyIcon is not available.
+    func suggestedInputIconSymbol() -> String {
+        let name = (try? readDeviceName()) ?? ""
+        let transport = readTransportType()
+
+        // iPhone (Continuity Camera)
+        if name.contains("iPhone") { return "iphone" }
+
+        // iPad
+        if name.contains("iPad") { return "ipad" }
+
+        // AirPods variants (work as both input/output)
+        if name.contains("AirPods Pro") { return "airpodspro" }
+        if name.contains("AirPods Max") { return "airpodsmax" }
+        if name.contains("AirPods") { return "airpods.gen3" }
+
+        // Beats
+        if name.contains("Beats") { return "beats.headphones" }
+
+        // MacBook built-in
+        if name.contains("MacBook") { return "laptopcomputer" }
+        
+        // Display mic
+        if name.contains("Studio Display") { return "display" }
+        if name.contains("Pro Display XDR") { return "display" }
+
+        // Transport-based fallbacks
+        switch transport {
+        case .builtIn:
+            return "mic"
+        case .usb:
+            return "cable.connector"
+        case .bluetooth, .bluetoothLE:
+            return "mic"
+        default:
+            return "mic"
+        }
     }
 }
